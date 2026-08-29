@@ -1,5 +1,10 @@
 "use client"
 
+import { useRouter } from "next/navigation"
+import { toast } from "sonner"
+
+import { useAuth } from "@/components/auth-provider"
+import { signOut } from "@/lib/auth"
 import {
   Avatar,
   AvatarFallback,
@@ -23,7 +28,7 @@ import {
 import { EllipsisVerticalIcon, CircleUserRoundIcon, CreditCardIcon, BellIcon, LogOutIcon } from "lucide-react"
 
 export function NavUser({
-  user,
+  user: fallbackUser,
 }: {
   user: {
     name: string
@@ -32,6 +37,24 @@ export function NavUser({
   }
 }) {
   const { isMobile } = useSidebar()
+  const { user: authUser } = useAuth()
+  const router = useRouter()
+
+  const user = {
+    name: authUser?.displayName || authUser?.email?.split("@")[0] || fallbackUser.name,
+    email: authUser?.email || fallbackUser.email,
+    avatar: authUser?.photoURL || fallbackUser.avatar,
+  }
+
+  async function handleSignOut() {
+    try {
+      await signOut()
+      router.replace("/login")
+    } catch {
+      toast.error("Đăng xuất thất bại. Vui lòng thử lại.")
+    }
+  }
+
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -94,7 +117,7 @@ export function NavUser({
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={handleSignOut}>
               <LogOutIcon
               />
               Log out
