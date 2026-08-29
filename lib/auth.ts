@@ -7,7 +7,7 @@ import {
   type UserCredential,
 } from "firebase/auth"
 
-import { appleProvider, auth, googleProvider } from "@/lib/firebase"
+import { auth, googleProvider } from "@/lib/firebase"
 
 export function signInWithEmail(email: string, password: string): Promise<UserCredential> {
   return signInWithEmailAndPassword(auth, email, password)
@@ -19,10 +19,6 @@ export function signUpWithEmail(email: string, password: string): Promise<UserCr
 
 export function signInWithGoogle(): Promise<UserCredential> {
   return signInWithPopup(auth, googleProvider)
-}
-
-export function signInWithApple(): Promise<UserCredential> {
-  return signInWithPopup(auth, appleProvider)
 }
 
 export function resetPassword(email: string): Promise<void> {

@@ -1,5 +1,5 @@
 import { getApp, getApps, initializeApp, type FirebaseOptions } from "firebase/app"
-import { getAuth, GoogleAuthProvider, OAuthProvider } from "firebase/auth"
+import { getAuth, GoogleAuthProvider } from "firebase/auth"
 import { getFirestore } from "firebase/firestore"
 import { getStorage } from "firebase/storage"
 import { type Analytics, getAnalytics, isSupported } from "firebase/analytics"
@@ -21,7 +21,6 @@ export const db = getFirestore(firebaseApp)
 export const storage = getStorage(firebaseApp)
 
 export const googleProvider = new GoogleAuthProvider()
-export const appleProvider = new OAuthProvider("apple.com")
 
 /**
  * Analytics only works in the browser and only on supported environments,
