@@ -31,6 +31,8 @@ pnpm-debug.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
+# Firebase web config is public (NEXT_PUBLIC_*) — committed so hosts build from git
+!.env.production
 
 # typescript
 *.tsbuildinfo
