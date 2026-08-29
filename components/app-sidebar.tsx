@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Image from "next/image"
 import Link from "next/link"
 
 import { NavDocuments } from "@/components/nav-documents"
@@ -16,7 +17,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { LayoutDashboardIcon, ListIcon, ChartBarIcon, FolderIcon, UsersIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, FileChartColumnIcon, FileIcon, CommandIcon } from "lucide-react"
+import { LayoutDashboardIcon, ListIcon, ChartBarIcon, FolderIcon, UsersIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, FileChartColumnIcon, FileIcon } from "lucide-react"
 
 const data = {
   user: {
@@ -26,7 +27,7 @@ const data = {
   },
   navMain: [
     {
-      title: "Home",
+      title: "Trang chủ",
       url: "/",
       icon: (
         <LayoutDashboardIcon
@@ -34,7 +35,7 @@ const data = {
       ),
     },
     {
-      title: "Dashboard",
+      title: "Bảng điều khiển",
       url: "/dashboard",
       icon: (
         <ChartBarIcon
@@ -42,7 +43,7 @@ const data = {
       ),
     },
     {
-      title: "Lifecycle",
+      title: "Vòng đời",
       url: "#",
       icon: (
         <ListIcon
@@ -50,7 +51,7 @@ const data = {
       ),
     },
     {
-      title: "Analytics",
+      title: "Phân tích",
       url: "#",
       icon: (
         <ChartBarIcon
@@ -58,7 +59,7 @@ const data = {
       ),
     },
     {
-      title: "Projects",
+      title: "Dự án",
       url: "#",
       icon: (
         <FolderIcon
@@ -66,7 +67,7 @@ const data = {
       ),
     },
     {
-      title: "Team",
+      title: "Nhóm",
       url: "#",
       icon: (
         <UsersIcon
@@ -133,7 +134,7 @@ const data = {
   ],
   navSecondary: [
     {
-      title: "Settings",
+      title: "Cài đặt",
       url: "#",
       icon: (
         <Settings2Icon
@@ -141,7 +142,7 @@ const data = {
       ),
     },
     {
-      title: "Get Help",
+      title: "Trợ giúp",
       url: "#",
       icon: (
         <CircleHelpIcon
@@ -149,7 +150,7 @@ const data = {
       ),
     },
     {
-      title: "Search",
+      title: "Tìm kiếm",
       url: "#",
       icon: (
         <SearchIcon
@@ -159,7 +160,7 @@ const data = {
   ],
   documents: [
     {
-      name: "Data Library",
+      name: "Thư viện dữ liệu",
       url: "#",
       icon: (
         <DatabaseIcon
@@ -167,7 +168,7 @@ const data = {
       ),
     },
     {
-      name: "Reports",
+      name: "Báo cáo",
       url: "#",
       icon: (
         <FileChartColumnIcon
@@ -175,7 +176,7 @@ const data = {
       ),
     },
     {
-      name: "Word Assistant",
+      name: "Trợ lý Word",
       url: "#",
       icon: (
         <FileIcon
@@ -194,8 +195,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               className="data-[slot=sidebar-menu-button]:p-1.5!"
               render={<Link href="/" />}
             >
-              <CommandIcon className="size-5!" />
-              <span className="text-base font-semibold">Acme Inc.</span>
+              <Image
+                src="/logohem.png"
+                alt="Hẻm"
+                width={20}
+                height={20}
+                className="size-5!"
+              />
+              <span className="text-base font-semibold">Hẻm - Product</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
