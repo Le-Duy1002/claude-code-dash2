@@ -22,6 +22,11 @@
 .DS_Store
 *.pem
 
+# service-account keys — never commit
+sa.json
+*-firebase-adminsdk-*.json
+service-account*.json
+
 # debug
 dev.log
 npm-debug.log*

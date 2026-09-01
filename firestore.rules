@@ -1,0 +1,43 @@
+rules_version = '2';
+
+// Reference copy of the Firestore security rules. Firestore rules are not
+// deployed from this repo automatically — paste this into
+// Firebase console -> Firestore Database -> Rules -> Publish, or run
+// `firebase deploy --only firestore:rules` if the Firebase CLI is set up.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // User profiles (lib/user.ts). Anyone signed in may read; only the owner writes.
+    match /users/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Tasks are scoped to their owner.
+    match /tasks/{taskId} {
+      allow read, update, delete: if request.auth != null
+        && resource.data.ownerUid == request.auth.uid;
+      allow create: if request.auth != null
+        && request.resource.data.ownerUid == request.auth.uid;
+
+      // Threaded comments on a task the caller owns.
+      match /comments/{commentId} {
+        allow read: if request.auth != null
+          && get(/databases/$(database)/documents/tasks/$(taskId)).data.ownerUid == request.auth.uid;
+        allow create: if request.auth != null
+          && request.resource.data.createdByUid == request.auth.uid;
+        allow delete: if request.auth != null
+          && resource.data.createdByUid == request.auth.uid;
+      }
+    }
+
+    // Document library — a server-maintained mirror of the shared Google Drive
+    // folder. Every signed-in member reads it; only the Admin SDK (which bypasses
+    // rules) writes, so client writes are denied.
+    match /documents/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+  }
+}

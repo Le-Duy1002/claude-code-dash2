@@ -17,7 +17,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { LayoutDashboardIcon, ListIcon, ChartBarIcon, FolderIcon, UsersIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, FileChartColumnIcon, FileIcon, ClipboardListIcon } from "lucide-react"
+import { LayoutDashboardIcon, ListIcon, ChartBarIcon, FolderIcon, FolderOpenIcon, UsersIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, FileChartColumnIcon, FileIcon, ClipboardListIcon } from "lucide-react"
 
 const data = {
   user: {
@@ -47,6 +47,14 @@ const data = {
       url: "/dashboard/task",
       icon: (
         <ClipboardListIcon
+        />
+      ),
+    },
+    {
+      title: "Tài liệu",
+      url: "/documents",
+      icon: (
+        <FolderOpenIcon
         />
       ),
     },

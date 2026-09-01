@@ -1,0 +1,25 @@
+name: Sync Google Drive documents
+
+# Mirrors the shared Google Drive folder into the app every ~10 minutes.
+# GitHub schedules are best-effort and may lag a few minutes under load.
+# Required repo secrets:
+#   DRIVE_SYNC_URL     e.g. https://<your-app>.vercel.app/api/drive/sync
+#   DRIVE_SYNC_SECRET  the same value as the CRON_SECRET env var on the host
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger sync endpoint
+        run: |
+          curl --silent --show-error --fail-with-body \
+            -X POST "$DRIVE_SYNC_URL" \
+            -H "Authorization: Bearer $DRIVE_SYNC_SECRET"
+        env:
+          DRIVE_SYNC_URL: ${{ secrets.DRIVE_SYNC_URL }}
+          DRIVE_SYNC_SECRET: ${{ secrets.DRIVE_SYNC_SECRET }}
