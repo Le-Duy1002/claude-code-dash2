@@ -137,9 +137,12 @@ Rules that apply across features:
   - `POST /api/documents` / `PATCH|DELETE /api/documents/[id]` — upload, rename,
     delete. These use **OAuth as the folder owner** (`GOOGLE_OAUTH_*`, scope
     `drive.file`) because a service account has no storage quota and cannot own
-    files in a non-Workspace Drive. Rename/delete only touch Drive for
-    `source === "web"` docs; `source === "drive"` docs are edit-description-only.
-    Upload is capped at ~4 MB (Vercel request-body limit).
+    files in a non-Workspace Drive. The `drive.file` scope only permits writing
+    into a folder the app itself created, so the library folder is created by
+    `scripts/create-drive-folder.mjs` (not a pre-existing folder) and then
+    shared with the service account for the read side. Rename/delete only touch
+    Drive for `source === "web"` docs; `source === "drive"` docs are
+    edit-description-only. Upload is capped at ~4 MB (Vercel request-body limit).
 
 **Firestore and Storage security rules are not in this repo** — both are managed
 in the Firebase console. `documents` should be client-read-only
