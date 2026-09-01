@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
   DocumentList,
+  EditDocumentDialog,
   SyncButton,
+  UploadDocumentDialog,
   subscribeToDocuments,
   syncDocumentsFromDrive,
   type DocumentItem,
@@ -22,6 +24,13 @@ export default function DocumentsPage() {
   const [loading, setLoading] = React.useState(true)
   const [search, setSearch] = React.useState("")
 
+  const [editingId, setEditingId] = React.useState<string | null>(null)
+  const [editOpen, setEditOpen] = React.useState(false)
+
+  const runSync = React.useCallback(() => {
+    syncDocumentsFromDrive().catch(() => {})
+  }, [])
+
   React.useEffect(() => {
     if (!user) return
     setLoading(true)
@@ -33,9 +42,9 @@ export default function DocumentsPage() {
       () => setLoading(false)
     )
     // Pull the latest from Drive whenever the page is opened.
-    syncDocumentsFromDrive().catch(() => {})
+    runSync()
     return unsubscribe
-  }, [user])
+  }, [user, runSync])
 
   const visibleDocuments = React.useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -48,14 +57,17 @@ export default function DocumentsPage() {
     )
   }, [documents, search])
 
+  const editingDocument =
+    documents.find((document) => document.id === editingId) ?? null
+
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="font-heading text-lg font-medium">Tài liệu</h1>
           <p className="text-sm text-muted-foreground">
-            Bản sao của thư mục Google Drive chung. Thêm hoặc sửa tệp ngay trên
-            Drive, thay đổi sẽ tự đồng bộ về đây.
+            Đồng bộ với thư mục Google Drive chung — đính kèm tệp ở đây hoặc thêm
+            thẳng trên Drive, hai bên tự cập nhật cho nhau.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -72,6 +84,7 @@ export default function DocumentsPage() {
             </Button>
           )}
           <SyncButton />
+          <UploadDocumentDialog onUploaded={runSync} />
         </div>
       </div>
 
@@ -85,7 +98,20 @@ export default function DocumentsPage() {
         />
       </div>
 
-      <DocumentList documents={visibleDocuments} loading={loading} />
+      <DocumentList
+        documents={visibleDocuments}
+        loading={loading}
+        onEdit={(document) => {
+          setEditingId(document.id)
+          setEditOpen(true)
+        }}
+      />
+
+      <EditDocumentDialog
+        document={editingDocument}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+      />
     </div>
   )
 }

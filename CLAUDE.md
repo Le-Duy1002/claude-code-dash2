@@ -124,15 +124,22 @@ Rules that apply across features:
   for a root comment or the parent's id for a reply; `buildCommentTree()` turns
   the flat list into a tree and orphaned replies are promoted to roots. Deleting
   a comment cascades to its descendants in a single `writeBatch`.
-- `documents/{driveFileId}` — a **read-only mirror** of a shared Google Drive
-  folder, one doc per Drive file (the Drive file id is the doc id). Clients only
-  subscribe; the mirror is maintained server-side by `POST /api/drive/sync`,
-  which lists the folder via a service account (`lib/google-drive.ts`) and
-  upserts/deletes through the Admin SDK (`lib/firebase-admin.ts`). The sync
-  endpoint is triggered by the client on page open, by a manual button, and by
-  `.github/workflows/drive-sync.yml` on a cron. Writing documents from the
-  browser (web → Drive) is not built yet — it needs an OAuth "bot" Google
-  account because a service account cannot own files in a non-Workspace Drive.
+- `documents/{driveFileId}` — a mirror of a shared Google Drive folder, one doc
+  per Drive file (the Drive file id is the doc id), with a `source` field
+  (`"drive"` = added straight to Drive, `"web"` = uploaded through the app).
+  Clients only subscribe; all writes go through server routes on the Node
+  runtime:
+  - `POST /api/drive/sync` — reads the folder with a **service account**
+    (`lib/google-drive.ts` `listFolderFiles`) and upserts/deletes via the Admin
+    SDK. Triggered by the client on page open, a manual button, an upload, and
+    `.github/workflows/drive-sync.yml` on a cron. Accepts `CRON_SECRET` or a
+    Firebase ID token.
+  - `POST /api/documents` / `PATCH|DELETE /api/documents/[id]` — upload, rename,
+    delete. These use **OAuth as the folder owner** (`GOOGLE_OAUTH_*`, scope
+    `drive.file`) because a service account has no storage quota and cannot own
+    files in a non-Workspace Drive. Rename/delete only touch Drive for
+    `source === "web"` docs; `source === "drive"` docs are edit-description-only.
+    Upload is capped at ~4 MB (Vercel request-body limit).
 
 **Firestore and Storage security rules are not in this repo** — both are managed
 in the Firebase console. `documents` should be client-read-only
@@ -144,9 +151,13 @@ separately or requests fail with `permission-denied`.
 
 API routes under `app/api/` run on the Node runtime and read secrets from env
 (see `.env.example`): `FIREBASE_ADMIN_*` (Admin SDK key), `GOOGLE_DRIVE_FOLDER_ID`
-(+ optional `GOOGLE_DRIVE_*` to use a separate service account), and `CRON_SECRET`
-(bearer token the sync route also accepts in place of a Firebase ID token).
-`next.config.ts` lists `firebase-admin` and `googleapis` in `serverExternalPackages`.
+(+ optional `GOOGLE_DRIVE_*` to use a separate service account for reads),
+`GOOGLE_OAUTH_*` (folder-owner OAuth for Drive writes — get the refresh token
+with `scripts/get-refresh-token.mjs`), and `CRON_SECRET` (bearer token the sync
+route also accepts in place of a Firebase ID token). `next.config.ts` lists
+`firebase-admin` and `googleapis` in `serverExternalPackages`. The Firebase
+Admin singleton is lazy (`adminAuth()` / `adminDb()` are functions) so importing
+it never throws at build time.
 
 ### Dashboard starter (not product code)
 

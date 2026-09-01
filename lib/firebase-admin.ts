@@ -46,3 +46,20 @@ export function adminAuth(): Auth {
 export function adminDb(): Firestore {
   return getFirestore(getAdminApp())
 }
+
+/**
+ * Verifies the `Authorization: Bearer <Firebase ID token>` header and returns
+ * the decoded token, or `null` when it is missing or invalid.
+ */
+export async function getRequestUser(request: Request) {
+  const token = (request.headers.get("authorization") ?? "").replace(
+    /^Bearer\s+/i,
+    ""
+  )
+  if (!token) return null
+  try {
+    return await adminAuth().verifyIdToken(token)
+  } catch {
+    return null
+  }
+}

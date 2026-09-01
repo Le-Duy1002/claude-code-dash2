@@ -54,6 +54,24 @@ export function subscribeToDocuments(
   )
 }
 
+async function authedFetch(input: string, init: RequestInit): Promise<Response> {
+  const token = await auth.currentUser?.getIdToken()
+  if (!token) throw new Error("Chưa đăng nhập")
+
+  const response = await fetch(input, {
+    ...init,
+    headers: { ...init.headers, Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    const error = new Error(body.error ?? `Request failed (${response.status})`)
+    ;(error as { code?: string }).code = body.error
+    throw error
+  }
+  return response
+}
+
 /**
  * Asks the server to re-sync from Google Drive now (the "Đồng bộ ngay" button).
  * The Firestore subscription then pushes any changes to every open client.
@@ -64,18 +82,34 @@ export async function syncDocumentsFromDrive(): Promise<{
   updated: number
   deleted: number
 }> {
-  const token = await auth.currentUser?.getIdToken()
-  if (!token) throw new Error("Chưa đăng nhập")
-
-  const response = await fetch("/api/drive/sync", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-  })
-
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    throw new Error(body.error ?? `Sync failed (${response.status})`)
-  }
-
+  const response = await authedFetch("/api/drive/sync", { method: "POST" })
   return response.json()
+}
+
+export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024
+
+/** Uploads a file to the shared Drive folder via the server. */
+export async function uploadDocument(
+  file: File,
+  description: string
+): Promise<void> {
+  const form = new FormData()
+  form.append("file", file)
+  form.append("description", description)
+  await authedFetch("/api/documents", { method: "POST", body: form })
+}
+
+export async function updateDocument(
+  id: string,
+  input: { name: string; description: string }
+): Promise<void> {
+  await authedFetch(`/api/documents/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+}
+
+export async function deleteDocument(id: string): Promise<void> {
+  await authedFetch(`/api/documents/${id}`, { method: "DELETE" })
 }
