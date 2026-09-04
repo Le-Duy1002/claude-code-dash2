@@ -17,7 +17,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { LayoutDashboardIcon, ListIcon, ChartBarIcon, FolderIcon, FolderOpenIcon, UsersIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, FileChartColumnIcon, FileIcon, ClipboardListIcon } from "lucide-react"
+import { LayoutDashboardIcon, ListIcon, ChartBarIcon, FolderIcon, FolderOpenIcon, UsersIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, FileChartColumnIcon, FileIcon, ClipboardListIcon, GaugeIcon, CalendarClockIcon } from "lucide-react"
 
 const data = {
   user: {
@@ -47,6 +47,22 @@ const data = {
       url: "/dashboard/task",
       icon: (
         <ClipboardListIcon
+        />
+      ),
+    },
+    {
+      title: "Theo dõi công việc",
+      url: "/theo-doi-cong-viec",
+      icon: (
+        <GaugeIcon
+        />
+      ),
+    },
+    {
+      title: "Nhật ký AI theo ngày",
+      url: "/nhat-ky-ai",
+      icon: (
+        <CalendarClockIcon
         />
       ),
     },

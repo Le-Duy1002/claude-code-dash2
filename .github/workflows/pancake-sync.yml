@@ -1,0 +1,32 @@
+name: Sync Pancake work-tracking
+
+# Crawls Pancake and refreshes the per-staff daily aggregates
+# (`pancakeAgentDaily/*`) that the "Theo dõi công việc" page reads.
+# Runs every 30 minutes: re-syncs today (and yesterday, to catch late edits).
+#
+# Required repo secrets:
+#   PANCAKE_SYNC_URL     e.g. https://<your-app>.vercel.app/api/pancake/sync
+#   PANCAKE_SYNC_SECRET  the same value as the CRON_SECRET env var on the host
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "How many days back to re-sync"
+        default: "2"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Pancake sync
+        run: |
+          curl --silent --show-error --fail-with-body --max-time 1200 \
+            -X POST "$PANCAKE_SYNC_URL?days=${DAYS:-2}" \
+            -H "Authorization: Bearer $PANCAKE_SYNC_SECRET"
+        env:
+          PANCAKE_SYNC_URL: ${{ secrets.PANCAKE_SYNC_URL }}
+          PANCAKE_SYNC_SECRET: ${{ secrets.PANCAKE_SYNC_SECRET }}
+          DAYS: ${{ github.event.inputs.days }}

@@ -1,0 +1,403 @@
+"use client"
+
+import * as React from "react"
+import { AlertTriangleIcon, RefreshCwIcon } from "lucide-react"
+
+import { useAuth } from "@/components/auth-provider"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { cn } from "@/lib/utils"
+
+import { fetchDailyLog } from "../services/work-tracking-service"
+import { STAFF } from "../staff"
+import {
+  RANGE_LABELS,
+  RANGE_OPTIONS,
+  SHIFT_OPTIONS,
+  formatDateTime,
+  type DailyLogResponse,
+  type DailyLogRow,
+  type DailyLogTotals,
+  type PageKey,
+  type RangeKey,
+  type ShiftKey,
+} from "../types"
+
+const STAFF_OPTIONS = STAFF.map((s) => ({ value: s.key, label: s.name }))
+
+function n(value: number | null) {
+  return value == null ? "—" : value === 0 ? "·" : String(value)
+}
+
+function vnDate(iso: string) {
+  const [, m, d] = iso.split("-")
+  return `${d}/${m}`
+}
+
+type Group = "ca" | "inbox" | "chot" | "note"
+
+const GROUPS: {
+  id: Group
+  label: string
+  cls: string
+}[] = [
+  { id: "ca", label: "Ca làm việc", cls: "bg-sky-600/15 text-sky-700 dark:text-sky-300" },
+  {
+    id: "inbox",
+    label: "Xử lý inbox & tag (AI quét)",
+    cls: "bg-sky-600/15 text-sky-700 dark:text-sky-300",
+  },
+  {
+    id: "chot",
+    label: "Chốt đơn",
+    cls: "bg-emerald-600/15 text-emerald-700 dark:text-emerald-300",
+  },
+  { id: "note", label: "", cls: "bg-muted" },
+]
+
+type Col = {
+  group: Group
+  label: string
+  align: "left" | "right"
+  cls?: string
+  cell: (r: DailyLogRow) => React.ReactNode
+  total: (t: DailyLogTotals) => React.ReactNode
+}
+
+const COLS: Col[] = [
+  { group: "ca", label: "Ngày", align: "left",
+    cell: (r) => vnDate(r.date),
+    total: () => "" },
+  { group: "ca", label: "Ca", align: "left",
+    cell: (r) => r.shift,
+    total: (t) => `${t.daysWorked} ngày` },
+  { group: "ca", label: "Số giờ làm", align: "right",
+    cell: (r) => (r.hoursWorked == null ? "—" : `${r.hoursWorked}h`),
+    total: (t) => `${t.hoursWorked}h` },
+  { group: "inbox", label: "Tổng hội thoại", align: "right",
+    cell: (r) => n(r.totalConversations),
+    total: (t) => t.totalConversations },
+  { group: "inbox", label: "Rep đúng hạn (≤ 3′)", align: "right",
+    cls: "text-emerald-600 dark:text-emerald-400",
+    cell: (r) => n(r.replyOnTime),
+    total: (t) => t.replyOnTime },
+  { group: "inbox", label: "Rep chậm (3–15′)", align: "right",
+    cls: "text-amber-600 dark:text-amber-400",
+    cell: (r) => n(r.replySlow),
+    total: (t) => t.replySlow },
+  { group: "inbox", label: "Bỏ sót (> 15′)", align: "right",
+    cls: "text-destructive",
+    cell: (r) => n(r.missed),
+    total: (t) => t.missed },
+  { group: "inbox", label: "Tag đúng", align: "right",
+    cls: "text-emerald-600 dark:text-emerald-400",
+    cell: (r) => n(r.tagCorrect),
+    total: (t) => t.tagCorrect },
+  { group: "inbox", label: "Tag sai / thiếu", align: "right",
+    cls: "text-destructive",
+    cell: (r) => n(r.tagWrong),
+    total: (t) => t.tagWrong },
+  { group: "chot", label: "Khách xem demo", align: "right",
+    cell: (r) => n(r.demoCustomers),
+    total: (t) => t.demoCustomers },
+  { group: "chot", label: "Chốt từ demo", align: "right",
+    cell: (r) => n(r.demoClosed),
+    total: (t) => t.demoClosed },
+  { group: "chot", label: "Đơn chốt tổng", align: "right",
+    cell: (r) => n(r.ordersClosed),
+    total: (t) => t.ordersClosed },
+  { group: "note", label: "Ghi chú", align: "left",
+    cls: "text-muted-foreground font-normal",
+    cell: (r) => r.note,
+    total: () => "" },
+]
+
+/** last column index of each group -> gets a right divider */
+const DIVIDER_AFTER = new Set(
+  GROUPS.slice(0, -1).map(
+    (g) =>
+      COLS.reduce((last, c, i) => (c.group === g.id ? i : last), -1)
+  )
+)
+
+const divCls = (i: number) => (DIVIDER_AFTER.has(i) ? "border-r-2" : "")
+
+function LogTable({ data }: { data: DailyLogResponse }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border">
+      <Table className="min-w-[960px] text-xs [&_td]:border-r [&_th]:border-r [&_td:last-child]:border-r-0 [&_th:last-child]:border-r-0">
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            {GROUPS.map((g) => {
+              const span = COLS.filter((c) => c.group === g.id).length
+              return (
+                <TableHead
+                  key={g.id}
+                  colSpan={span}
+                  className={cn(
+                    "border-b border-r-2 px-2 py-1.5 text-center text-[0.7rem] font-semibold tracking-wide uppercase",
+                    g.cls
+                  )}
+                >
+                  {g.label || " "}
+                </TableHead>
+              )
+            })}
+          </TableRow>
+          <TableRow className="hover:bg-transparent">
+            {COLS.map((c, i) => (
+              <TableHead
+                key={i}
+                className={cn(
+                  "h-auto px-2 py-1.5 align-bottom leading-tight",
+                  c.align === "right" && "text-right",
+                  divCls(i)
+                )}
+              >
+                {c.label}
+              </TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+
+        <TableBody>
+          {data.rows.map((row) => (
+            <TableRow
+              key={row.date}
+              className={cn(!row.synced && "opacity-45")}
+            >
+              {COLS.map((c, i) => (
+                <TableCell
+                  key={i}
+                  className={cn(
+                    "px-2 py-1.5 whitespace-nowrap",
+                    c.align === "right" && "text-right tabular-nums",
+                    c.cls,
+                    divCls(i)
+                  )}
+                >
+                  {c.cell(row)}
+                </TableCell>
+              ))}
+            </TableRow>
+          ))}
+        </TableBody>
+
+        <TableFooter>
+          <TableRow className="hover:bg-transparent">
+            {COLS.map((c, i) => (
+              <TableCell
+                key={i}
+                className={cn(
+                  "px-2 py-1.5 font-semibold whitespace-nowrap",
+                  c.align === "right" && "text-right tabular-nums",
+                  i === 0 && "font-semibold",
+                  divCls(i)
+                )}
+              >
+                {i === 0
+                  ? `Tổng ${RANGE_LABELS[data.range].toLowerCase()}`
+                  : c.total(data.totals)}
+              </TableCell>
+            ))}
+          </TableRow>
+        </TableFooter>
+      </Table>
+    </div>
+  )
+}
+
+function FilterSelect({
+  value,
+  onChange,
+  options,
+  width,
+}: {
+  value: string
+  onChange: (value: string) => void
+  options: { value: string; label: string }[]
+  width: string
+}) {
+  return (
+    <Select
+      items={options}
+      value={value}
+      onValueChange={(v) => onChange(v ?? options[0].value)}
+    >
+      <SelectTrigger size="sm" className={width}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          {options.map((o) => (
+            <SelectItem key={o.value} value={o.value}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  )
+}
+
+export function DailyLogView() {
+  const { user } = useAuth()
+  const [staff, setStaff] = React.useState(STAFF[0].key)
+  const [range, setRange] = React.useState<RangeKey>("thisMonth")
+  const [shift, setShift] = React.useState<ShiftKey>("all")
+  const [page, setPage] = React.useState<PageKey>("all")
+
+  const [data, setData] = React.useState<DailyLogResponse | null>(null)
+  const [loading, setLoading] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+
+  const load = React.useCallback(() => {
+    if (!user) return
+    const controller = new AbortController()
+    setLoading(true)
+    setError(null)
+    fetchDailyLog({ staff, range, shift, page }, controller.signal)
+      .then(setData)
+      .catch((cause: Error) => {
+        if (cause.name !== "AbortError") setError(cause.message)
+      })
+      .finally(() => setLoading(false))
+    return () => controller.abort()
+  }, [user, staff, range, shift, page])
+
+  React.useEffect(() => load(), [load])
+
+  const pageOptions = React.useMemo(
+    () => [
+      { value: "all", label: "Cả 2 page" },
+      ...(data?.pages.map((p) => ({ value: p.id, label: p.name })) ?? []),
+    ],
+    [data]
+  )
+
+  return (
+    <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="font-heading text-lg font-medium">Nhật ký AI theo ngày</h1>
+          <p className="text-sm text-muted-foreground">
+            AI quét toàn bộ hội thoại mỗi ngày qua API Pancake. Chọn nhân viên để
+            tra soát từng ngày. Rep chậm = 3–15′ · Bỏ sót = &gt; 15′ hoặc không
+            trả lời · một hội thoại chỉ tính 1 lỗi.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <FilterSelect
+            value={staff}
+            onChange={setStaff}
+            options={STAFF_OPTIONS}
+            width="w-28"
+          />
+          <FilterSelect
+            value={range}
+            onChange={(v) => setRange(v as RangeKey)}
+            options={RANGE_OPTIONS}
+            width="w-32"
+          />
+          <FilterSelect
+            value={shift}
+            onChange={(v) => setShift(v as ShiftKey)}
+            options={SHIFT_OPTIONS}
+            width="w-36"
+          />
+          <FilterSelect
+            value={page}
+            onChange={(v) => setPage(v as PageKey)}
+            options={pageOptions}
+            width="w-40"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading}
+            onClick={() => load()}
+          >
+            <RefreshCwIcon
+              data-icon="inline-start"
+              className={loading ? "animate-spin" : undefined}
+            />
+            Làm mới
+          </Button>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          <AlertTriangleIcon className="mt-0.5 size-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {loading && !data ? (
+        <Skeleton className="h-96 w-full" />
+      ) : null}
+
+      {data ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              {data.staffName} ·{" "}
+              <span className="font-normal text-muted-foreground">
+                {RANGE_LABELS[data.range]} ·{" "}
+                {SHIFT_OPTIONS.find((o) => o.value === shift)?.label} ·{" "}
+                {pageOptions.find((o) => o.value === page)?.label}
+              </span>
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              {data.lastSyncedAtMs
+                ? `Đồng bộ lúc ${formatDateTime(data.lastSyncedAtMs)}`
+                : "Chưa có dữ liệu đồng bộ"}
+              {data.missingDays.length
+                ? ` · ${data.missingDays.length} ngày chưa đồng bộ (mờ)`
+                : ""}
+            </p>
+          </CardHeader>
+          <CardContent>
+            <LogTable data={data} />
+            <div className="mt-3 flex flex-col gap-1 text-xs text-muted-foreground">
+              <p>
+                <strong>Tổng hội thoại</strong> = số khách có nhắn tin mà nhân
+                viên này đã trả lời (1 khách = 1 hội thoại).{" "}
+                <strong>Rep đúng hạn</strong> = trả lời tin khách trong ≤ 3 phút.
+              </p>
+              <p>
+                <strong>Ca</strong> &amp; <strong>Số giờ làm</strong> = suy từ
+                hoạt động Pancake trong ngày (tin nhắn + tạo đơn): từ lần sớm
+                nhất đến muộn nhất.
+              </p>
+              <p>
+                <strong>Tag đúng / sai</strong> = xét hội thoại có đơn chốt: phải
+                có tag <em>Đã chốt</em>, và <em>Đã chốt</em> phải đi kèm{" "}
+                <em>Tiềm năng</em> — trừ khi có <em>Demo</em> bên cạnh thì không
+                cần Tiềm năng.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+    </div>
+  )
+}

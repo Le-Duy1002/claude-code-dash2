@@ -5,9 +5,18 @@ import { usePathname } from "next/navigation"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 
+const TITLES: Record<string, string> = {
+  "/": "Trang chủ",
+  "/dashboard": "Bảng điều khiển",
+  "/dashboard/task": "Công việc",
+  "/theo-doi-cong-viec": "Theo dõi công việc",
+  "/nhat-ky-ai": "Nhật ký AI theo ngày",
+  "/documents": "Tài liệu",
+}
+
 function titleFromPathname(pathname: string) {
-  if (pathname === "/") return "Home"
-  const last = pathname.split("/").filter(Boolean).pop() ?? "Home"
+  if (TITLES[pathname]) return TITLES[pathname]
+  const last = pathname.split("/").filter(Boolean).pop() ?? "Trang chủ"
   return last.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
