@@ -224,9 +224,16 @@ export type CriterionResult = {
 
 export type ScoreEvent = {
   atMs: number
+  /** customer name */
   label: string
-  /** e.g. "-8 phút", "hội thoại KH Thu Hà" */
+  /** e.g. "sau 8′", "chưa trả lời" */
   detail?: string
+  /** Pancake customer uuid */
+  customerId?: string
+  /** fb page id the conversation belongs to */
+  pageId?: string
+  /** Pancake conversation id (`{pageId}_{psid}`) */
+  conversationId?: string
 }
 
 export function evaluateCriterion(

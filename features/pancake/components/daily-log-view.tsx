@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { AlertTriangleIcon, RefreshCwIcon } from "lucide-react"
+import { AlertTriangleIcon, DownloadCloudIcon, RefreshCwIcon } from "lucide-react"
+import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth-provider"
 import { Button } from "@/components/ui/button"
@@ -26,20 +27,25 @@ import {
 } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 
-import { fetchDailyLog } from "../services/work-tracking-service"
+import {
+  autoSyncedRecently,
+  fetchDailyLog,
+  markAutoSynced,
+  triggerPancakeSync,
+} from "../services/work-tracking-service"
 import { STAFF } from "../staff"
 import {
   RANGE_LABELS,
-  RANGE_OPTIONS,
   SHIFT_OPTIONS,
+  formatDate,
   formatDateTime,
   type DailyLogResponse,
   type DailyLogRow,
   type DailyLogTotals,
   type PageKey,
-  type RangeKey,
   type ShiftKey,
 } from "../types"
+import { DateRangePicker, type RangeValue } from "./date-range-picker"
 
 const STAFF_OPTIONS = STAFF.map((s) => ({ value: s.key, label: s.name }))
 
@@ -140,6 +146,12 @@ const DIVIDER_AFTER = new Set(
 
 const divCls = (i: number) => (DIVIDER_AFTER.has(i) ? "border-r-2" : "")
 
+function rangeText(data: DailyLogResponse): string {
+  return data.range === "custom"
+    ? `${formatDate(data.fromMs)} – ${formatDate(data.toMs - 1)}`
+    : RANGE_LABELS[data.range]
+}
+
 function LogTable({ data }: { data: DailyLogResponse }) {
   return (
     <div className="overflow-x-auto rounded-lg border">
@@ -214,7 +226,7 @@ function LogTable({ data }: { data: DailyLogResponse }) {
                 )}
               >
                 {i === 0
-                  ? `Tổng ${RANGE_LABELS[data.range].toLowerCase()}`
+                  ? `Tổng ${rangeText(data).toLowerCase()}`
                   : c.total(data.totals)}
               </TableCell>
             ))}
@@ -261,12 +273,15 @@ function FilterSelect({
 export function DailyLogView() {
   const { user } = useAuth()
   const [staff, setStaff] = React.useState(STAFF[0].key)
-  const [range, setRange] = React.useState<RangeKey>("thisMonth")
+  const [dateRange, setDateRange] = React.useState<RangeValue>({
+    range: "thisMonth",
+  })
   const [shift, setShift] = React.useState<ShiftKey>("all")
   const [page, setPage] = React.useState<PageKey>("all")
 
   const [data, setData] = React.useState<DailyLogResponse | null>(null)
   const [loading, setLoading] = React.useState(false)
+  const [syncing, setSyncing] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
   const load = React.useCallback(() => {
@@ -274,16 +289,49 @@ export function DailyLogView() {
     const controller = new AbortController()
     setLoading(true)
     setError(null)
-    fetchDailyLog({ staff, range, shift, page }, controller.signal)
+    fetchDailyLog({ staff, ...dateRange, shift, page }, controller.signal)
       .then(setData)
       .catch((cause: Error) => {
         if (cause.name !== "AbortError") setError(cause.message)
       })
       .finally(() => setLoading(false))
     return () => controller.abort()
-  }, [user, staff, range, shift, page])
+  }, [user, staff, dateRange, shift, page])
 
   React.useEffect(() => load(), [load])
+
+  const runSync = React.useCallback(
+    async (auto = false) => {
+      setSyncing(true)
+      const id = toast.loading(
+        auto
+          ? "Đang đồng bộ dữ liệu hôm nay từ Pancake…"
+          : "Đang đồng bộ hôm nay từ Pancake… (quét hội thoại, có thể vài phút)"
+      )
+      try {
+        const result = await triggerPancakeSync(1)
+        const crawled = result.days.reduce((s, d) => s + d.convsCrawled, 0)
+        toast.success(`Đồng bộ xong · ${crawled} hội thoại`, { id })
+        load()
+      } catch (cause) {
+        toast.error(`Đồng bộ lỗi: ${(cause as Error).message}`, { id })
+      } finally {
+        setSyncing(false)
+      }
+    },
+    [load]
+  )
+
+  // auto-sync today once on open (5-min cooldown shared with the scorecard view)
+  const autoSyncTried = React.useRef(false)
+  React.useEffect(() => {
+    if (!user || autoSyncTried.current) return
+    autoSyncTried.current = true
+    if (!autoSyncedRecently()) {
+      markAutoSynced()
+      void runSync(true)
+    }
+  }, [user, runSync])
 
   const pageOptions = React.useMemo(
     () => [
@@ -311,12 +359,7 @@ export function DailyLogView() {
             options={STAFF_OPTIONS}
             width="w-28"
           />
-          <FilterSelect
-            value={range}
-            onChange={(v) => setRange(v as RangeKey)}
-            options={RANGE_OPTIONS}
-            width="w-32"
-          />
+          <DateRangePicker value={dateRange} onChange={setDateRange} />
           <FilterSelect
             value={shift}
             onChange={(v) => setShift(v as ShiftKey)}
@@ -332,7 +375,7 @@ export function DailyLogView() {
           <Button
             variant="outline"
             size="sm"
-            disabled={loading}
+            disabled={loading || syncing}
             onClick={() => load()}
           >
             <RefreshCwIcon
@@ -340,6 +383,18 @@ export function DailyLogView() {
               className={loading ? "animate-spin" : undefined}
             />
             Làm mới
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            disabled={syncing}
+            onClick={() => runSync()}
+          >
+            <DownloadCloudIcon
+              data-icon="inline-start"
+              className={syncing ? "animate-pulse" : undefined}
+            />
+            {syncing ? "Đang đồng bộ…" : "Đồng bộ ngay"}
           </Button>
         </div>
       </div>
@@ -361,7 +416,7 @@ export function DailyLogView() {
             <CardTitle>
               {data.staffName} ·{" "}
               <span className="font-normal text-muted-foreground">
-                {RANGE_LABELS[data.range]} ·{" "}
+                {rangeText(data)} ·{" "}
                 {SHIFT_OPTIONS.find((o) => o.value === shift)?.label} ·{" "}
                 {pageOptions.find((o) => o.value === page)?.label}
               </span>
@@ -377,11 +432,21 @@ export function DailyLogView() {
           </CardHeader>
           <CardContent>
             <LogTable data={data} />
-            <div className="mt-3 flex flex-col gap-1 text-xs text-muted-foreground">
+            <div className="mt-3 flex flex-col gap-1.5 text-xs text-muted-foreground">
               <p>
                 <strong>Tổng hội thoại</strong> = số khách có nhắn tin mà nhân
                 viên này đã trả lời (1 khách = 1 hội thoại).{" "}
                 <strong>Rep đúng hạn</strong> = trả lời tin khách trong ≤ 3 phút.
+              </p>
+              <p>
+                Hội thoại có tag <em>Demo</em> (mọi biến thể: HDemo, DDemo,
+                demo trl…), <em>Thông điệp</em>, <em>Hẹn</em>, <em>Khách rác</em>{" "}
+                hoặc <em>Đã chốt</em> (khách chỉ nhắn một câu cảm ơn cuối) và
+                tin khách nhắn trong khung <strong>0h–8h sáng</strong> (ngoài
+                giờ trực) <strong>vẫn tính vào Tổng hội thoại</strong>, nhưng{" "}
+                <strong>không tính</strong> vào Rep đúng hạn / Rep chậm / Bỏ
+                sót. Tin được Botcake trả lời trong 20 phút cũng không tính là
+                nhân viên bỏ sót.
               </p>
               <p>
                 <strong>Ca</strong> &amp; <strong>Số giờ làm</strong> = suy từ
@@ -389,10 +454,10 @@ export function DailyLogView() {
                 nhất đến muộn nhất.
               </p>
               <p>
-                <strong>Tag đúng / sai</strong> = xét hội thoại có đơn chốt: phải
-                có tag <em>Đã chốt</em>, và <em>Đã chốt</em> phải đi kèm{" "}
-                <em>Tiềm năng</em> — trừ khi có <em>Demo</em> bên cạnh thì không
-                cần Tiềm năng.
+                <strong>Tag đúng / sai</strong> = xét hội thoại có đơn chốt hoặc
+                có tag <em>Đã chốt</em>: phải có tag <em>Đã chốt</em>, và{" "}
+                <em>Đã chốt</em> phải đi kèm <em>Tiềm năng</em> — trừ khi có{" "}
+                <em>Demo</em> bên cạnh thì không cần Tiềm năng.
               </p>
             </div>
           </CardContent>

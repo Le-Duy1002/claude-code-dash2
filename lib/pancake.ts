@@ -379,29 +379,45 @@ export type PancakeMessage = {
   senderName: string
   /** Pancake user UUID of the staff sender (`from.uid`), or null. */
   senderUid: string | null
+  /** plain-text message body (tags stripped), best effort */
+  text: string
 }
 
+/**
+ * Who sent a message. A message is from the CUSTOMER only when `from.id` is the
+ * customer's PSID (i.e. NOT the page id) — every outbound message (a human
+ * staff reply, a Botcake flow, a quick-reply template, an auto message) carries
+ * the page id in `from.id` / `from.admin_id`. Human staff replies additionally
+ * carry `from.uid`; everything else outbound is treated as "bot".
+ *
+ * The earlier heuristic (no `admin_name` ⇒ customer) misclassified template /
+ * page-name outbound messages as customer messages, which inflated response
+ * times ("bỏ sót 28 phút" when the agent actually replied in 1 minute).
+ */
 function classifyActor(
-  from: Record<string, unknown>
+  from: Record<string, unknown>,
+  pageId: string
 ): PancakeMessage["actor"] {
-  const adminName = String(from.admin_name ?? "")
-  // A human staff reply carries `from.uid` (the user UUID). A Botcake flow
-  // message has `admin_name: "Botcake"` and no uid. A customer message has no
-  // `admin_name` at all.
+  const fromPage =
+    String(from.id ?? "") === pageId || String(from.admin_id ?? "") === pageId
+  if (!fromPage) return "customer"
   if (from.uid) return "staff"
-  if (adminName.toLowerCase() === "botcake" || from.bot_id != null) return "bot"
-  if (adminName) return "bot" // page-name auto message, not a person
-  return "customer"
+  return "bot"
 }
 
-function mapMessage(raw: Record<string, unknown>): PancakeMessage {
+function mapMessage(
+  raw: Record<string, unknown>,
+  pageId: string
+): PancakeMessage {
   const from = (raw.from ?? {}) as Record<string, unknown>
+  const body = String(raw.original_message ?? raw.message ?? "")
   return {
     id: String(raw.id ?? ""),
     insertedAtMs: parsePancakeTime(raw.inserted_at),
-    actor: classifyActor(from),
+    actor: classifyActor(from, pageId),
     senderName: String(from.admin_name ?? from.name ?? "—"),
     senderUid: (from.uid as string) ?? null,
+    text: body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
   }
 }
 
@@ -437,7 +453,7 @@ export async function fetchMessages(
     let fresh = 0
     let oldest = Infinity
     for (const raw of rows) {
-      const message = mapMessage(raw)
+      const message = mapMessage(raw, fbPageId)
       oldest = Math.min(oldest, message.insertedAtMs || Infinity)
       if (byId.has(message.id)) continue
       byId.set(message.id, message)

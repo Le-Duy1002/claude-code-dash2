@@ -14,20 +14,61 @@ async function idToken(): Promise<string> {
   return token
 }
 
+export type RangeParams = {
+  range: RangeKey
+  shift: ShiftKey
+  page: PageKey
+  /** `YYYY-MM-DD` (Vietnam), required when `range === "custom"` */
+  from?: string | null
+  to?: string | null
+}
+
+function rangeQuery(params: {
+  range: RangeKey
+  shift: ShiftKey
+  page: PageKey
+  from?: string | null
+  to?: string | null
+  staff?: string
+}): URLSearchParams {
+  const q = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v) q.set(k, String(v))
+  }
+  return q
+}
+
+const AUTO_SYNC_KEY = "pancake:autoSyncAt"
+const AUTO_SYNC_COOLDOWN_MS = 5 * 60_000
+
+/** True if an auto-sync ran (from any Pancake view) within the cooldown. */
+export function autoSyncedRecently(): boolean {
+  try {
+    const at = Number(localStorage.getItem(AUTO_SYNC_KEY) ?? 0)
+    return Number.isFinite(at) && Date.now() - at < AUTO_SYNC_COOLDOWN_MS
+  } catch {
+    return false
+  }
+}
+
+export function markAutoSynced(): void {
+  try {
+    localStorage.setItem(AUTO_SYNC_KEY, String(Date.now()))
+  } catch {
+    /* private mode / disabled storage — auto-sync just won't be throttled */
+  }
+}
+
 /**
  * Reads the evaluated work-tracking report. The server folds the synced daily
  * aggregates (`pancakeAgentDaily/*`) over the selected range / shift / page and
  * scores each staff member. Fast — no live Pancake calls.
  */
 export async function fetchWorkTracking(
-  params: { range: RangeKey; shift: ShiftKey; page: PageKey },
+  params: RangeParams,
   signal?: AbortSignal
 ): Promise<WorkReport> {
-  const query = new URLSearchParams({
-    range: params.range,
-    shift: params.shift,
-    page: params.page,
-  })
+  const query = rangeQuery(params)
   const response = await fetch(`/api/pancake/work-tracking?${query}`, {
     headers: { Authorization: `Bearer ${await idToken()}` },
     signal,
@@ -44,10 +85,10 @@ export async function fetchWorkTracking(
  * day over the selected range, from the same synced aggregates.
  */
 export async function fetchDailyLog(
-  params: { staff: string; range: RangeKey; shift: ShiftKey; page: PageKey },
+  params: RangeParams & { staff: string },
   signal?: AbortSignal
 ): Promise<DailyLogResponse> {
-  const query = new URLSearchParams(params)
+  const query = rangeQuery(params)
   const response = await fetch(`/api/pancake/daily-log?${query}`, {
     headers: { Authorization: `Bearer ${await idToken()}` },
     signal,

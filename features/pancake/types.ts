@@ -23,22 +23,37 @@ export type RangeKey =
   | "today"
   | "yesterday"
   | "thisWeek"
-  | "thisMonth"
+  | "lastWeek"
   | "7d"
+  | "thisMonth"
+  | "lastMonth"
   | "30d"
+  | "60d"
+  | "custom"
 
 export const RANGE_LABELS: Record<RangeKey, string> = {
   today: "Hôm nay",
   yesterday: "Hôm qua",
   thisWeek: "Tuần này",
+  lastWeek: "Tuần trước",
+  "7d": "7 ngày trước",
   thisMonth: "Tháng này",
-  "7d": "7 ngày qua",
-  "30d": "30 ngày qua",
+  lastMonth: "Tháng trước",
+  "30d": "30 ngày trước",
+  "60d": "60 ngày trước",
+  custom: "Tùy chọn",
 }
 
-export const RANGE_OPTIONS = (Object.keys(RANGE_LABELS) as RangeKey[]).map(
-  (value) => ({ value, label: RANGE_LABELS[value] })
-)
+/** Preset picks for the date-range picker, grouped like the Pancake picker. */
+export const RANGE_PRESET_GROUPS: { label: string; keys: RangeKey[] }[] = [
+  { label: "Theo ngày", keys: ["today", "yesterday"] },
+  { label: "Theo tuần", keys: ["thisWeek", "lastWeek", "7d"] },
+  { label: "Theo tháng", keys: ["thisMonth", "lastMonth", "30d", "60d"] },
+]
+
+export const RANGE_OPTIONS = (Object.keys(RANGE_LABELS) as RangeKey[])
+  .filter((value) => value !== "custom")
+  .map((value) => ({ value, label: RANGE_LABELS[value] }))
 
 export type ShiftKey = "all" | "sang" | "chieu" | "toi"
 
@@ -130,7 +145,32 @@ export function bucketsForShift(shift: ShiftKey): ShiftBucketKey[] {
   return shift === "all" ? SHIFT_BUCKET_KEYS : [shift]
 }
 
-export type ScoreEventLite = { atMs: number; label: string; detail?: string }
+export type ScoreEventLite = {
+  atMs: number
+  /** customer name */
+  label: string
+  detail?: string
+  /** Pancake customer uuid */
+  customerId?: string
+  /** fb page id the conversation belongs to */
+  pageId?: string
+  /** Pancake conversation id (`{pageId}_{psid}`) */
+  conversationId?: string
+}
+
+/**
+ * Direct link to a conversation in the Pancake web inbox.
+ *
+ * `conversationId` is Pancake's `{pageId}_{psid}` id. The web inbox opens a
+ * single conversation via the per-page route with a `c_id` query param.
+ */
+export function pancakeConvLink(
+  pageId: string | undefined | null,
+  conversationId: string | undefined | null
+): string | undefined {
+  if (!pageId || !conversationId) return undefined
+  return `https://pancake.vn/${pageId}?c_id=${encodeURIComponent(conversationId)}`
+}
 
 /** One (shop × staff × shift) cell for one day. */
 export type AgentDayBucket = {
@@ -219,14 +259,31 @@ export function markActivity(bucket: AgentDayBucket, atMs: number) {
 }
 
 /**
- * Standard tags for criterion 6. Match Pancake tag text case-insensitively.
- * (User rules, 04/09/2026.)
+ * Standard tags used by the scoring rules. Match Pancake tag text
+ * case-insensitively. (User rules, 04–05/09/2026.)
+ *
+ * - `tiemNang` / `daChot` / `demo` — criterion 6 (tag đúng & đầy đủ).
+ * - `demo` / `thongDiep` / `hen` / `khachRac` — a conversation carrying any of
+ *   these does NOT need a timely reply, so it is EXCLUDED from criteria 4 & 5
+ *   only (khách nói vu vơ, hẹn lần sau, cảm ơn dịch vụ, broadcast…). It still
+ *   counts toward "Tổng hội thoại" and criterion 7.
  */
 export const TAG_NAMES = {
   tiemNang: "tiềm năng",
   daChot: "đã chốt",
   demo: "demo",
+  thongDiep: "thông điệp",
+  hen: "hẹn",
+  khachRac: "khách rác",
 } as const
+
+/** Tag names whose presence excludes a conversation from criteria 4 & 5. */
+export const NO_REPLY_NEEDED_TAGS: string[] = [
+  TAG_NAMES.demo,
+  TAG_NAMES.thongDiep,
+  TAG_NAMES.hen,
+  TAG_NAMES.khachRac,
+]
 
 export const SHIFT_BUCKET_LABEL: Record<ShiftBucketKey, string> = {
   sang: "Sáng",
@@ -347,6 +404,8 @@ export type DailyLogResponse = {
   staffKey: string
   staffName: string
   range: RangeKey
+  fromMs: number
+  toMs: number
   shift: ShiftKey
   page: PageKey
   pages: { id: string; name: string }[]
@@ -383,7 +442,9 @@ function vnMidnight(daysAgo: number): number {
   return today - daysAgo * DAY
 }
 
-export function resolveRange(key: RangeKey): { fromMs: number; toMs: number } {
+export function resolveRange(
+  key: Exclude<RangeKey, "custom">
+): { fromMs: number; toMs: number } {
   const now = Date.now()
   switch (key) {
     case "today":
@@ -394,13 +455,46 @@ export function resolveRange(key: RangeKey): { fromMs: number; toMs: number } {
       return { fromMs: vnMidnight(6), toMs: now }
     case "30d":
       return { fromMs: vnMidnight(29), toMs: now }
+    case "60d":
+      return { fromMs: vnMidnight(59), toMs: now }
     case "thisWeek": {
       const wd = (vnParts(now).weekday + 6) % 7 // Mon = 0
       return { fromMs: vnMidnight(wd), toMs: now }
     }
+    case "lastWeek": {
+      const wd = (vnParts(now).weekday + 6) % 7
+      const startThis = vnMidnight(wd)
+      return { fromMs: startThis - 7 * DAY, toMs: startThis }
+    }
     case "thisMonth":
       return { fromMs: vnMidnight(vnParts(now).day - 1), toMs: now }
+    case "lastMonth": {
+      const firstThis = vnMidnight(vnParts(now).day - 1)
+      const dayInLast = new Date(firstThis + VN_OFFSET_MS - DAY)
+      const daysInLast = new Date(
+        Date.UTC(dayInLast.getUTCFullYear(), dayInLast.getUTCMonth() + 1, 0)
+      ).getUTCDate()
+      return { fromMs: firstThis - daysInLast * DAY, toMs: firstThis }
+    }
   }
+}
+
+/**
+ * Resolve a range for a report request. `custom` needs `fromISO`/`toISO`
+ * (`YYYY-MM-DD`, Vietnam days, inclusive); anything else ignores them.
+ */
+export function resolveReportRange(
+  key: RangeKey,
+  fromISO?: string | null,
+  toISO?: string | null
+): { fromMs: number; toMs: number } {
+  if (key !== "custom") return resolveRange(key)
+  if (!fromISO || !toISO) return resolveRange("today")
+  const a = vnDayRange(fromISO)
+  const b = vnDayRange(toISO)
+  return a.fromMs <= b.fromMs
+    ? { fromMs: a.fromMs, toMs: b.toMs }
+    : { fromMs: b.fromMs, toMs: a.toMs }
 }
 
 /** Is this instant inside the selected shift (Vietnam local)? */
@@ -419,6 +513,15 @@ export function formatVnd(amount: number): string {
     currency: "VND",
     maximumFractionDigits: 0,
   }).format(amount || 0)
+}
+
+export function formatDate(ms: number): string {
+  if (!ms) return "—"
+  return new Intl.DateTimeFormat("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(ms))
 }
 
 export function formatDateTime(ms: number): string {

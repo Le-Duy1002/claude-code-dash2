@@ -13,7 +13,7 @@ import {
   bucketsForShift,
   emptyBucket,
   mergeDayDoc,
-  resolveRange,
+  resolveReportRange,
   vnDatesInRange,
   type AgentDayBucket,
   type AgentDayDoc,
@@ -32,10 +32,15 @@ const RANGE_KEYS: RangeKey[] = [
   "today",
   "yesterday",
   "thisWeek",
-  "thisMonth",
+  "lastWeek",
   "7d",
+  "thisMonth",
+  "lastMonth",
   "30d",
+  "60d",
+  "custom",
 ]
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 const SHIFT_KEYS: ShiftKey[] = ["all", "sang", "chieu", "toi"]
 
 async function authorize(request: Request): Promise<boolean> {
@@ -71,8 +76,12 @@ export async function GET(request: Request) {
       : "all"
   ) as ShiftKey
   const page = (url.searchParams.get("page") ?? "all") as PageKey
+  const rawFrom = url.searchParams.get("from")
+  const rawTo = url.searchParams.get("to")
+  const from = rawFrom && ISO_DATE.test(rawFrom) ? rawFrom : null
+  const to = rawTo && ISO_DATE.test(rawTo) ? rawTo : null
 
-  const { fromMs, toMs } = resolveRange(range)
+  const { fromMs, toMs } = resolveReportRange(range, from, to)
   const dates = vnDatesInRange(fromMs, toMs)
   const wantBuckets = bucketsForShift(shift)
   const wantShops = page === "all" ? null : new Set([page])

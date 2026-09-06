@@ -15,17 +15,27 @@ import {
 } from "@/lib/pancake"
 import { seenStaffByFbId, staffByUid } from "../staff"
 import {
+  NO_REPLY_NEEDED_TAGS,
   TAG_NAMES,
   addBucket,
   emptyBucket,
   markActivity,
   shiftBucketOf,
   vnDayRange,
+  vnHour,
   type AgentDayBucket,
   type AgentDayDoc,
   type BucketTree,
   type ShiftBucketKey,
 } from "../types"
+
+type TagSets = {
+  demo: Set<number>
+  tiemNang: Set<number>
+  daChot: Set<number>
+  /** demo | thông điệp | hẹn | khách rác — excludes a conv from criteria 4 & 5 */
+  noReplyNeeded: Set<number>
+}
 
 /** Order statuses that don't count as revenue (huỷ / hoàn) — best effort. */
 const CANCELLED_STATUSES = new Set([11, 12, 13, 14, 15, 16])
@@ -131,7 +141,7 @@ async function syncShopInbox(
   toMs: number,
   seedTree: ShopTree,
   processed: Set<string>,
-  tagId: { demo: Set<number>; tiemNang: Set<number>; daChot: Set<number> },
+  tagId: TagSets,
   closedOrderConvIds: Set<string>,
   conversations: Awaited<ReturnType<typeof fetchConversationsSince>>
 ): Promise<{ tree: ShopTree; crawled: number; partial: boolean }> {
@@ -167,14 +177,17 @@ async function syncShopInbox(
     }
   }
 
-  // Crawl every conversation that had ANY activity that day (so a reply today
-  // to a customer who wrote yesterday is still captured).
-  const active = (conv: (typeof conversations)[number]) =>
-    inDay(Math.max(conv.updatedAtMs, conv.lastCustomerAtMs)) ||
-    inDay(conv.lastCustomerAtMs)
+  // A conversation belongs to the day the CUSTOMER messaged. `updated_at` is
+  // bumped by later bot/tag activity, so it can't be used to date a historical
+  // day (it would drop Sep-4 conversations that a bot touched on Sep-5).
   const toCrawl = conversations
-    .filter((conv) => conv.customerUuid && active(conv) && !processed.has(conv.id))
-    .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+    .filter(
+      (conv) =>
+        conv.customerUuid &&
+        inDay(conv.lastCustomerAtMs) &&
+        !processed.has(conv.id)
+    )
+    .sort((a, b) => b.lastCustomerAtMs - a.lastCustomerAtMs)
   const partial = toCrawl.length > MAX_CRAWL
   const crawlSet = toCrawl.slice(0, MAX_CRAWL)
 
@@ -184,9 +197,25 @@ async function syncShopInbox(
     conv: (typeof conversations)[number]
     /** tracked staff.key -> earliest message time today */
     handlersToday: Map<string, number>
-    /** worst first-response to a customer message SENT TODAY */
-    worst: { minutes: number | null; replierKey: string | null } | null
+    /**
+     * The response outcome for this conversation, or null when it needs no
+     * human (all first-touches handled by Botcake, or this staff never
+     * engaged). `minutes` is the FIRST-response time in minutes (crit 4);
+     * `kind` also folds in end-of-day abandonment (crit 5).
+     */
+    response: {
+      kind: "onTime" | "slow" | "missed"
+      minutes: number | null
+      replierKey: string | null
+    } | null
   }
+
+  // Botcake's flow has ~30-min gaps mid-sequence, so the window is generous.
+  const BOT_GRACE_MS = 20 * 60_000
+  // A customer's LAST line that is a thank-you / "I'll contact later" / "no
+  // need" needs no reply — not a miss even if unanswered. (User, 06/09.)
+  const CLOSING_RE =
+    /c[aáảâấ]?m ơn|thank|tks|d[aạ] v[aâ]ng|v[aâ]ng [aạ]|li[eê]n h[eệ].*(sau|l[aạ]i)|nh[aắ]n.*(sau|l[aạ]i)|h[eẹ]n.*(sau|l[aạ]i|g[aặ]p)|đ[eể] (m[iì]nh|em|e|t[oô]i) (xem|suy ngh|tham kh|h[oỏ]i)|khi n[aà]o c[aầ]n|c[aầ]n (th[iì]|g[iì]) (nh[aắ]n|li[eê]n h[eệ]|inbox)|kh[oô]ng c[aầ]n|th[oô]i [aạ]|ok(i|e|ê)?( [aạ]| nha| b[aạ]n)?\s*$/i
 
   const crawled = await mapLimit<
     (typeof conversations)[number],
@@ -197,7 +226,7 @@ async function syncShopInbox(
         shop.fbPageId,
         conv.id,
         conv.customerUuid!,
-        { sinceMs: fromMs, maxBatches: 6 }
+        { sinceMs: fromMs, maxBatches: 10 }
       )
       const handlersToday = new Map<string, number>()
       const staffMsgs = messages.filter(
@@ -210,54 +239,105 @@ async function syncShopInbox(
         if (prev == null || m.insertedAtMs < prev) handlersToday.set(key, m.insertedAtMs)
       }
 
-      // worst first-response over the customer messages sent today
-      let worst: Crawled["worst"] = null
-      for (const cm of messages) {
-        if (cm.actor !== "customer" || !inDay(cm.insertedAtMs)) continue
-        const next = staffMsgs.find((sm) => sm.insertedAtMs > cm.insertedAtMs)
-        const minutes = next
-          ? Math.max(0, (next.insertedAtMs - cm.insertedAtMs) / 60_000)
+      const botMsgs = messages.filter((m) => m.actor === "bot")
+      const botHandled = (atMs: number) =>
+        botMsgs.some(
+          (b) => b.insertedAtMs > atMs && b.insertedAtMs - atMs <= BOT_GRACE_MS
+        )
+
+      // customer messages that actually need a person: after the Botcake
+      // first-touch, inside working hours (>= 8h VN)
+      const relevant = messages.filter(
+        (m) =>
+          m.actor === "customer" &&
+          inDay(m.insertedAtMs) &&
+          vnHour(m.insertedAtMs) >= 8 &&
+          !botHandled(m.insertedAtMs)
+      )
+
+      let response: Crawled["response"] = null
+      if (relevant.length > 0 && handlersToday.size > 0) {
+        const staffAfter = (t: number) =>
+          staffMsgs.find((s) => s.insertedAtMs > t) ?? null
+        const keyOf = (uid: string | null | undefined) =>
+          uid ? (staffByUid(uid)?.key ?? null) : null
+
+        const firstCm = relevant[0]
+        const firstReply = staffAfter(firstCm.insertedAtMs)
+        const firstMin = firstReply
+          ? Math.max(
+              0,
+              (firstReply.insertedAtMs - firstCm.insertedAtMs) / 60_000
+            )
           : null
-        const replierKey = next ? staffByUid(next.senderUid)!.key : null
-        // null (unanswered) always wins; otherwise the largest gap wins
-        if (
-          !worst ||
-          minutes == null ||
-          (worst.minutes != null && minutes > worst.minutes)
-        ) {
-          worst = { minutes, replierKey }
-          if (minutes == null) break
+
+        // "abandoned" only once the last customer line has gone unanswered for
+        // 20+ min (measured to now, or to end-of-day for past days) — otherwise
+        // a message that just arrived would be a false miss and the conv is
+        // never re-crawled this day.
+        const last = relevant[relevant.length - 1]
+        const deadline = Math.min(toMs, Date.now())
+        const abandoned =
+          !staffAfter(last.insertedAtMs) &&
+          !CLOSING_RE.test(last.text) &&
+          deadline - last.insertedAtMs > 20 * 60_000
+
+        const replierKey =
+          keyOf(firstReply?.senderUid) ??
+          [...handlersToday.keys()][0] ??
+          null
+
+        if (abandoned) {
+          response = { kind: "missed", minutes: firstMin, replierKey }
+        } else if (firstReply && firstMin != null) {
+          response = {
+            kind: firstMin <= 3 ? "onTime" : "slow",
+            minutes: firstMin,
+            replierKey,
+          }
         }
+        // else: first line is a closing note or just arrived — nothing to grade
       }
-      return { conv, handlersToday, worst }
+      return { conv, handlersToday, response }
     } catch {
-      return { conv, handlersToday: new Map(), worst: null }
+      return { conv, handlersToday: new Map(), response: null }
     }
   })
 
   for (const item of crawled) {
     processed.add(item.conv.id)
     const conv = item.conv
-    if (item.handlersToday.size === 0 && item.worst == null) continue
+    if (item.handlersToday.size === 0 && item.response == null) continue
 
     const hasDemo = has(conv.tagIds, tagId.demo)
     const hasTiemNang = has(conv.tagIds, tagId.tiemNang)
     const hasDaChot = has(conv.tagIds, tagId.daChot)
     const closedHere = closedOrderConvIds.has(conv.id)
+    // khách nói vu vơ / hẹn / cảm ơn / broadcast — không cần rep đúng hạn
+    const noReplyNeeded = has(conv.tagIds, tagId.noReplyNeeded)
+
+    const evBase = {
+      label: conv.customerName,
+      customerId: conv.customerUuid ?? undefined,
+      pageId: conv.pageId,
+      conversationId: conv.id,
+    }
 
     // criterion 6 — the "Đã chốt" tag rule (user, 05/09):
-    // a conversation where the customer paid + an order was created must carry
-    // "Đã chốt", and "Đã chốt" is valid only alongside "Tiềm năng" OR "Demo".
+    // customer paid + order created -> must carry "Đã chốt"; "Đã chốt" is valid
+    // only alongside "Tiềm năng", OR "Demo" (then "Tiềm năng" not required).
     let ruleApplied = false
     const issues: string[] = []
     if (closedHere || hasDaChot) {
       ruleApplied = true
       if (!hasDaChot) issues.push("có đơn chốt nhưng thiếu tag Đã chốt")
       else if (!hasTiemNang && !hasDemo)
-        issues.push("Đã chốt nhưng không kèm Tiềm năng / Demo")
+        issues.push("Đã chốt nhưng thiếu tag Tiềm năng (hoặc Demo)")
     }
 
-    // convHandled + tag check -> every staff who replied today
+    // per staff who replied today: "Tổng hội thoại" counts every conversation
+    // (1 khách = 1 hội thoại); the response outcome below is what skips the
+    // "no reply needed" tags.
     for (const [key, firstMs] of item.handlersToday) {
       const b = bucket(key, shiftBucketOf(firstMs))
       b.convHandled += 1
@@ -268,37 +348,39 @@ async function syncShopInbox(
         else {
           b.tagWrong += 1
           b.tagWrongEvents.push({
+            ...evBase,
             atMs: firstMs,
-            label: `KH ${conv.customerName}`,
             detail: issues.join("; "),
           })
         }
       }
     }
 
-    // response outcome -> the staff who made the worst (or the) reply
-    if (!item.worst) continue
-    const w = item.worst
-    const key =
-      w.replierKey ??
-      [...item.handlersToday.keys()][0] ??
-      staffByUid(conv.lastSentByUid)?.key
+    // criteria 4 & 5 — skip conversations tagged Demo* / Thông điệp / Hẹn /
+    // Khách rác (không cần rep), and "Đã chốt" ones (khách thường chỉ nhắn
+    // một câu cảm ơn cuối hội thoại). They still count in "Tổng hội thoại".
+    const r = item.response
+    if (!r || noReplyNeeded || hasDaChot) continue
+    const key = r.replierKey ?? [...item.handlersToday.keys()][0]
     if (!key) continue
     const at = item.handlersToday.get(key) ?? conv.lastCustomerAtMs
     const b = bucket(key, shiftBucketOf(at))
     b.replied += 1
-    const event = { atMs: at, label: `KH ${conv.customerName}` }
-    if (w.minutes == null || w.minutes > 15) {
+    const event = { ...evBase, atMs: at }
+    if (r.kind === "missed") {
       b.missed += 1
-      b.missedEvents.push({
-        ...event,
-        detail: w.minutes == null ? "chưa trả lời" : `sau ${Math.round(w.minutes)}′`,
-      })
-    } else if (w.minutes <= 3) {
+      b.missedEvents.push({ ...event, detail: "bỏ ngỏ tin cuối của khách" })
+    } else if (r.kind === "onTime") {
       b.onTime += 1
     } else {
       b.slow += 1
-      b.slowEvents.push({ ...event, detail: `sau ${Math.round(w.minutes)}′` })
+      b.slowEvents.push({
+        ...event,
+        detail:
+          r.minutes == null
+            ? "rep chậm"
+            : `rep tin đầu sau ${Math.round(r.minutes)}′`,
+      })
     }
   }
 
@@ -332,26 +414,33 @@ export async function syncDay(
 
   for (const page of pages) {
     // tag catalogue + conversation list (shared by orders + inbox)
-    const tagId = {
+    const tagId: TagSets = {
       demo: new Set<number>(),
       tiemNang: new Set<number>(),
       daChot: new Set<number>(),
+      noReplyNeeded: new Set<number>(),
     }
     let conversations: Awaited<ReturnType<typeof fetchConversationsSince>> = []
     if (hasInboxToken() && page.fbPageId) {
       try {
         for (const tag of (await fetchPageTags(page.fbPageId)).values()) {
           const text = tag.text.trim().toLowerCase()
-          if (text === TAG_NAMES.demo) tagId.demo.add(tag.id)
+          // any "demo" variant (demo, demo trl, HDemo, DDemo, TDemo, QDemo,
+          // DemoTest…) is a demo conversation for scoring purposes
+          const isDemo = text.includes("demo")
+          if (isDemo) tagId.demo.add(tag.id)
           if (text === TAG_NAMES.tiemNang) tagId.tiemNang.add(tag.id)
           if (text === TAG_NAMES.daChot) tagId.daChot.add(tag.id)
+          if (isDemo || NO_REPLY_NEEDED_TAGS.includes(text)) {
+            tagId.noReplyNeeded.add(tag.id)
+          }
         }
       } catch (error) {
         warnings.push(`${page.name}: tag — ${(error as Error).message}`)
       }
       try {
         conversations = await fetchConversationsSince(page.fbPageId, fromMs, {
-          maxBatches: 25,
+          maxBatches: 40,
         })
       } catch (error) {
         warnings.push(`${page.name}: hội thoại — ${(error as Error).message}`)
