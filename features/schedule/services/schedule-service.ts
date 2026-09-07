@@ -16,8 +16,8 @@ import { db } from "@/lib/firebase"
 import {
   SHIFT_DEFS,
   WEEKDAY_LABELS,
-  cellOf,
-  emptyWeek,
+  getCell,
+  mapScheduleWeek,
   staffName,
   weekEndDate,
   type OvertimeEntry,
@@ -36,24 +36,7 @@ function toMillis(value: unknown): number {
   return value instanceof Timestamp ? value.toMillis() : 0
 }
 
-function mapWeek(id: string, data: Record<string, unknown>): ScheduleWeek {
-  const base = emptyWeek(id)
-  return {
-    ...base,
-    startDate: (data.startDate as string) || base.startDate,
-    endDate: (data.endDate as string) || base.endDate,
-    status: data.status === "locked" ? "locked" : "draft",
-    grid: (data.grid as ScheduleWeek["grid"]) ?? {},
-    overtime: Array.isArray(data.overtime)
-      ? (data.overtime as OvertimeEntry[])
-      : [],
-    freeNote: (data.freeNote as string) ?? "",
-    lockedAtMs: toMillis(data.lockedAt) || null,
-    lockedByName: (data.lockedByName as string) ?? null,
-    updatedAtMs: toMillis(data.updatedAt),
-    updatedByName: (data.updatedByName as string) ?? null,
-  }
-}
+const mapWeek = mapScheduleWeek
 
 function mapChange(id: string, data: Record<string, unknown>): ScheduleChange {
   return {
@@ -173,7 +156,7 @@ export async function setCell(
   actor: Actor,
   reason?: string | null
 ): Promise<void> {
-  const before = cellOf(week, dayIndex, shift)
+  const before = getCell(week, dayIndex, shift).staff
   if (before === staffKey) return
 
   const batch = writeBatch(db)
@@ -182,7 +165,14 @@ export async function setCell(
     {
       ...weekBase(week, actor),
       status: week.status,
-      grid: { [dayIndex]: { [shift]: staffKey } },
+      grid: {
+        [dayIndex]: {
+          // clearing a cell also wipes its note / swap flag
+          [shift]: staffKey
+            ? { staff: staffKey }
+            : { staff: null, note: null, excludeFromScore: null },
+        },
+      },
     },
     { merge: true }
   )
@@ -202,6 +192,52 @@ export async function setCell(
     kind,
     staffKey: staffKey ?? before,
     summary,
+    reason,
+  })
+  await batch.commit()
+}
+
+/** Set the note / "đổi ca" flag on one cell. */
+export async function setCellNote(
+  week: ScheduleWeek,
+  dayIndex: number,
+  shift: ShiftId,
+  note: string,
+  excludeFromScore: boolean,
+  actor: Actor,
+  reason?: string | null
+): Promise<void> {
+  const current = getCell(week, dayIndex, shift)
+  if (
+    (current.note ?? "") === note &&
+    Boolean(current.excludeFromScore) === excludeFromScore
+  ) {
+    return
+  }
+
+  const batch = writeBatch(db)
+  batch.set(
+    doc(db, WEEKS, week.weekId),
+    {
+      ...weekBase(week, actor),
+      status: week.status,
+      grid: {
+        [dayIndex]: {
+          [shift]: {
+            note: note || null,
+            excludeFromScore: excludeFromScore || null,
+          },
+        },
+      },
+    },
+    { merge: true }
+  )
+  pushChange(batch, week, actor, {
+    kind: "note",
+    staffKey: current.staff,
+    summary: `${slot(dayIndex, shift)}: ${
+      excludeFromScore ? "đánh dấu đổi ca — " : ""
+    }${note ? `ghi chú "${note.slice(0, 60)}"` : "xoá ghi chú"}`,
     reason,
   })
   await batch.commit()

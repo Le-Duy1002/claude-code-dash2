@@ -4,6 +4,7 @@ export { ChangeHistoryDialog } from "./components/change-history-dialog"
 export {
   lockWeek,
   setCell,
+  setCellNote,
   setFreeNote,
   setOvertime,
   subscribeToChanges,
@@ -12,3 +13,4 @@ export {
   type Actor,
 } from "./services/schedule-service"
 export * from "./types"
+export * from "./scoring"

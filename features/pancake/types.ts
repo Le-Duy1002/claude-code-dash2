@@ -99,6 +99,15 @@ export type StaffEvaluation = {
     sampled: number
     demoConversations: number
     demoClosed: number
+    /** schedule-derived (criteria 1 & 2) — absent when no schedule registered */
+    schedule?: {
+      registeredShifts: number
+      expectedHours: number
+      workedHours: number
+      hoursShort: number
+      lateCount: number
+      noShowCount: number
+    }
   }
 }
 

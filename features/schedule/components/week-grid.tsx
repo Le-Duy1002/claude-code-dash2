@@ -1,11 +1,14 @@
 "use client"
 
 import * as React from "react"
+import { Popover } from "@base-ui/react/popover"
 import {
   CheckIcon,
   LockIcon,
+  MessageSquareTextIcon,
   PencilIcon,
   PlusIcon,
+  RepeatIcon,
   Trash2Icon,
   UnlockIcon,
 } from "lucide-react"
@@ -13,6 +16,7 @@ import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -36,6 +40,7 @@ import { cn } from "@/lib/utils"
 import {
   lockWeek,
   setCell,
+  setCellNote,
   setFreeNote,
   setOvertime,
   unlockWeek,
@@ -46,8 +51,8 @@ import {
   SHIFT_DEFS,
   SHIFT_IDS,
   WEEKDAY_LABELS,
-  cellOf,
   formatHours,
+  getCell,
   registeredHours,
   staffName,
   weekDates,
@@ -95,17 +100,6 @@ export function WeekGrid({ week, actor }: { week: ScheduleWeek; actor: Actor }) 
     [week]
   )
 
-  async function commitCell(
-    dayIndex: number,
-    shift: ShiftId,
-    staffKey: string | null
-  ) {
-    try {
-      await setCell(week, dayIndex, shift, staffKey, actor, changeReason)
-    } catch (error) {
-      toast.error(`Không lưu được: ${(error as Error).message}`)
-    }
-  }
 
   return (
     <div className="overflow-hidden rounded-lg border">
@@ -171,54 +165,18 @@ export function WeekGrid({ week, actor }: { week: ScheduleWeek; actor: Actor }) 
                     {SHIFT_DEFS[shift].range}
                   </div>
                 </td>
-                {dates.map((_, dayIndex) => {
-                  const value = cellOf(week, dayIndex, shift)
-                  return (
-                    <td key={dayIndex} className="text-center align-middle">
-                      {editable ? (
-                        <Select
-                          items={CELL_OPTIONS}
-                          value={value ?? NONE}
-                          onValueChange={(v) =>
-                            commitCell(
-                              dayIndex,
-                              shift,
-                              !v || v === NONE ? null : v
-                            )
-                          }
-                        >
-                          <SelectTrigger
-                            size="sm"
-                            className={cn(
-                              "mx-auto w-full min-w-[5.5rem] justify-center",
-                              !value && "text-muted-foreground"
-                            )}
-                          >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectGroup>
-                              {CELL_OPTIONS.map((o) => (
-                                <SelectItem key={o.value} value={o.value}>
-                                  {o.label}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <span
-                          className={cn(
-                            "inline-block px-1",
-                            !value && "text-muted-foreground"
-                          )}
-                        >
-                          {value ? staffName(value) : "—"}
-                        </span>
-                      )}
-                    </td>
-                  )
-                })}
+                {dates.map((_, dayIndex) => (
+                  <td key={dayIndex} className="text-center align-middle">
+                    <ShiftCell
+                      week={week}
+                      dayIndex={dayIndex}
+                      shift={shift}
+                      editable={editable}
+                      actor={actor}
+                      reason={changeReason}
+                    />
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>
@@ -267,6 +225,179 @@ export function WeekGrid({ week, actor }: { week: ScheduleWeek; actor: Actor }) 
           reason={changeReason}
         />
       </div>
+    </div>
+  )
+}
+
+// -------------------------------------------------------------- one cell
+
+function ShiftCell({
+  week,
+  dayIndex,
+  shift,
+  editable,
+  actor,
+  reason,
+}: {
+  week: ScheduleWeek
+  dayIndex: number
+  shift: ShiftId
+  editable: boolean
+  actor: Actor
+  reason: string | null
+}) {
+  const cell = getCell(week, dayIndex, shift)
+  const [noteOpen, setNoteOpen] = React.useState(false)
+  const [noteDraft, setNoteDraft] = React.useState(cell.note ?? "")
+  const [excludeDraft, setExcludeDraft] = React.useState(
+    Boolean(cell.excludeFromScore)
+  )
+
+  React.useEffect(() => {
+    if (noteOpen) {
+      setNoteDraft(cell.note ?? "")
+      setExcludeDraft(Boolean(cell.excludeFromScore))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteOpen])
+
+  async function commitStaff(staffKey: string | null) {
+    try {
+      await setCell(week, dayIndex, shift, staffKey, actor, reason)
+    } catch (error) {
+      toast.error(`Không lưu được: ${(error as Error).message}`)
+    }
+  }
+
+  async function commitNote() {
+    try {
+      await setCellNote(
+        week,
+        dayIndex,
+        shift,
+        noteDraft.trim(),
+        excludeDraft,
+        actor,
+        reason
+      )
+      setNoteOpen(false)
+    } catch (error) {
+      toast.error(`Không lưu được: ${(error as Error).message}`)
+    }
+  }
+
+  const marker =
+    cell.note || cell.excludeFromScore ? (
+      <span
+        className="block truncate px-1 text-[0.65rem] text-amber-600 dark:text-amber-400"
+        title={cell.note || "Ca đổi/nhờ người"}
+      >
+        {cell.excludeFromScore ? "⇄ đổi ca " : ""}
+        {cell.note}
+      </span>
+    ) : null
+
+  if (!editable) {
+    return (
+      <div className="flex flex-col items-center gap-0.5 px-1 py-0.5">
+        <span className={cn("text-sm", !cell.staff && "text-muted-foreground")}>
+          {cell.staff ? staffName(cell.staff) : "—"}
+        </span>
+        {marker}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-0.5">
+        <Select
+          items={CELL_OPTIONS}
+          value={cell.staff ?? NONE}
+          onValueChange={(v) => commitStaff(!v || v === NONE ? null : v)}
+        >
+          <SelectTrigger
+            size="sm"
+            className={cn(
+              "w-full min-w-[5rem] justify-center",
+              !cell.staff && "text-muted-foreground"
+            )}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {CELL_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Popover.Root open={noteOpen} onOpenChange={setNoteOpen}>
+          <Popover.Trigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className={cn(
+                  "shrink-0",
+                  cell.note || cell.excludeFromScore
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-muted-foreground"
+                )}
+              />
+            }
+          >
+            {cell.excludeFromScore ? (
+              <RepeatIcon />
+            ) : (
+              <MessageSquareTextIcon />
+            )}
+          </Popover.Trigger>
+          <Popover.Portal>
+            <Popover.Positioner sideOffset={4} align="end" className="z-50">
+              <Popover.Popup className="z-50 w-64 rounded-lg border bg-popover p-3 text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95">
+                <p className="mb-1.5 text-xs font-medium">
+                  Ghi chú {SHIFT_DEFS[shift].label} · {WEEKDAY_LABELS[dayIndex]}
+                </p>
+                <Textarea
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  rows={2}
+                  placeholder="VD: Hà trực hộ 3h"
+                  className="text-sm"
+                />
+                <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs">
+                  <Checkbox
+                    checked={excludeDraft}
+                    onCheckedChange={(c) => setExcludeDraft(c === true)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    Ca này có đổi / nhờ người trực hộ — bỏ qua khi chấm tiêu chí
+                    1 (Đủ giờ ca) &amp; 2 (Vào ca)
+                  </span>
+                </label>
+                <div className="mt-2 flex justify-end gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setNoteOpen(false)}
+                  >
+                    Huỷ
+                  </Button>
+                  <Button size="sm" onClick={commitNote}>
+                    Lưu
+                  </Button>
+                </div>
+              </Popover.Popup>
+            </Popover.Positioner>
+          </Popover.Portal>
+        </Popover.Root>
+      </div>
+      {marker}
     </div>
   )
 }

@@ -153,13 +153,56 @@ export function todayIso(): string {
   return isoOf(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate())
 }
 
+const VN_OFFSET_MS = 7 * 60 * 60 * 1000
+
+/** [startMs, endMs) epoch ms of a shift on a given Vietnam calendar day. */
+export function vnShiftWindowMs(
+  dateIso: string,
+  shift: ShiftId
+): { startMs: number; endMs: number } {
+  const [y, m, d] = dateIso.split("-").map(Number)
+  const def = SHIFT_DEFS[shift]
+  return {
+    startMs: Date.UTC(y, m - 1, d, def.startHour) - VN_OFFSET_MS,
+    endMs: Date.UTC(y, m - 1, d, def.endHour) - VN_OFFSET_MS,
+  }
+}
+
+/** Distinct week ids (Mondays) covering a list of `yyyy-mm-dd` dates. */
+export function weekIdsForDates(dates: string[]): string[] {
+  return [...new Set(dates.map((date) => mondayOf(date)))]
+}
+
 // ------------------------------------------------------------ the grid
 
-/** shiftId → staff key (or null / missing = trống). */
-export type ShiftAssignment = Partial<Record<ShiftId, string | null>>
+/** One cell of the grid: who works it, plus an optional note. */
+export type ScheduleCell = {
+  staff: string | null
+  /** free note on the cell, e.g. "Hà trực hộ 3h" */
+  note?: string
+  /**
+   * The shift was swapped / covered by someone else — exclude it from
+   * criteria 1 (Đủ giờ ca) & 2 (Vào ca). The manager reviews it by hand.
+   */
+  excludeFromScore?: boolean
+}
+
+/** shiftId → cell. A bare string is the legacy shape (staff key only). */
+export type ShiftAssignment = Partial<Record<ShiftId, ScheduleCell | string | null>>
 
 /** weekday index 0–6 → shift assignments. */
 export type WeekGrid = Partial<Record<number, ShiftAssignment>>
+
+/** Coerce a stored cell (object, legacy string, or null) to {@link ScheduleCell}. */
+export function normalizeCell(value: ScheduleCell | string | null | undefined): ScheduleCell {
+  if (!value) return { staff: null }
+  if (typeof value === "string") return { staff: value }
+  return {
+    staff: value.staff ?? null,
+    note: value.note || undefined,
+    excludeFromScore: value.excludeFromScore || undefined,
+  }
+}
 
 export type OvertimeEntry = {
   id: string
@@ -207,12 +250,70 @@ export function emptyWeek(weekId: string): ScheduleWeek {
   }
 }
 
+/** Read `.toMillis()` off a Firestore Timestamp (admin or client), else 0. */
+function tsToMs(value: unknown): number {
+  if (typeof value === "number") return value
+  if (
+    value &&
+    typeof (value as { toMillis?: () => number }).toMillis === "function"
+  ) {
+    return (value as { toMillis: () => number }).toMillis()
+  }
+  return 0
+}
+
+/**
+ * Map a raw `workSchedules/{weekId}` document to {@link ScheduleWeek}. SDK-
+ * agnostic (works with both the client and Admin Firestore SDKs).
+ */
+export function mapScheduleWeek(
+  weekId: string,
+  data: Record<string, unknown> | undefined | null
+): ScheduleWeek {
+  const base = emptyWeek(weekId)
+  if (!data) return base
+  const rawGrid = (data.grid ?? {}) as Record<string, Record<string, unknown>>
+  const grid: WeekGrid = {}
+  for (const [day, shifts] of Object.entries(rawGrid)) {
+    const assignment: ShiftAssignment = {}
+    for (const [shift, cell] of Object.entries(shifts ?? {})) {
+      assignment[shift as ShiftId] = normalizeCell(
+        cell as ScheduleCell | string | null
+      )
+    }
+    grid[Number(day)] = assignment
+  }
+  return {
+    ...base,
+    startDate: (data.startDate as string) || base.startDate,
+    endDate: (data.endDate as string) || base.endDate,
+    status: data.status === "locked" ? "locked" : "draft",
+    grid,
+    overtime: Array.isArray(data.overtime)
+      ? (data.overtime as OvertimeEntry[])
+      : [],
+    freeNote: (data.freeNote as string) ?? "",
+    lockedAtMs: tsToMs(data.lockedAt) || null,
+    lockedByName: (data.lockedByName as string) ?? null,
+    updatedAtMs: tsToMs(data.updatedAt),
+    updatedByName: (data.updatedByName as string) ?? null,
+  }
+}
+
+export function getCell(
+  week: ScheduleWeek,
+  dayIndex: number,
+  shift: ShiftId
+): ScheduleCell {
+  return normalizeCell(week.grid[dayIndex]?.[shift])
+}
+
 export function cellOf(
   week: ScheduleWeek,
   dayIndex: number,
   shift: ShiftId
 ): string | null {
-  return week.grid[dayIndex]?.[shift] ?? null
+  return getCell(week, dayIndex, shift).staff
 }
 
 // ------------------------------------------------------------ change log
@@ -287,9 +388,9 @@ export function registeredHours(
     dates.forEach((date, dayIndex) => {
       if (date < fromIso || date > toIso) return
       for (const shift of SHIFT_IDS) {
-        const staffKey = week.grid[dayIndex]?.[shift]
-        if (!staffKey) continue
-        const row = bump(staffKey)
+        const cell = getCell(week, dayIndex, shift)
+        if (!cell.staff) continue
+        const row = bump(cell.staff)
         row.shiftHours += SHIFT_DEFS[shift].hours
         row.shifts += 1
         row.dates.add(date)

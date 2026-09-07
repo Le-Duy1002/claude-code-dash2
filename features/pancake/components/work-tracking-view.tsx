@@ -166,6 +166,8 @@ function DrillPanel({
     return [...map.values()].sort((a, b) => a.atMs - b.atMs)
   }, [result.offenders])
 
+  const hasConvIds = grouped.some((e) => e.conversationId)
+
   return (
     <div className="mt-3 overflow-hidden rounded-lg border">
       <div className="flex items-start justify-between gap-2 border-b bg-muted/40 px-3 py-2">
@@ -223,24 +225,30 @@ function DrillPanel({
           <div>
             <div className="mb-1 flex items-center justify-between gap-2">
               <p className="text-xs font-medium text-muted-foreground">
-                Hội thoại làm mất điểm ({result.offenders.length}
-                {result.offenders.length >= 40 ? "+" : ""}) — bấm tên để copy
-                tên, bấm ID để copy ID hội thoại
+                {hasConvIds
+                  ? `Hội thoại làm mất điểm (${result.offenders.length}${
+                      result.offenders.length >= 40 ? "+" : ""
+                    }) — bấm tên để copy, bấm ID để copy ID hội thoại`
+                  : `Chi tiết làm mất điểm (${result.offenders.length}${
+                      result.offenders.length >= 40 ? "+" : ""
+                    })`}
               </p>
-              <button
-                type="button"
-                onClick={() => setShowDetails((v) => !v)}
-                className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
-                aria-expanded={showDetails}
-              >
-                {showDetails ? "Ẩn ID hội thoại" : "Hiện ID hội thoại"}
-                <ChevronDownIcon
-                  className={cn(
-                    "size-3.5 transition-transform",
-                    showDetails && "rotate-180"
-                  )}
-                />
-              </button>
+              {hasConvIds ? (
+                <button
+                  type="button"
+                  onClick={() => setShowDetails((v) => !v)}
+                  className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
+                  aria-expanded={showDetails}
+                >
+                  {showDetails ? "Ẩn ID hội thoại" : "Hiện ID hội thoại"}
+                  <ChevronDownIcon
+                    className={cn(
+                      "size-3.5 transition-transform",
+                      showDetails && "rotate-180"
+                    )}
+                  />
+                </button>
+              ) : null}
             </div>
             <ul className="flex flex-col divide-y rounded-md border text-sm">
               {grouped.map((e, i) => {

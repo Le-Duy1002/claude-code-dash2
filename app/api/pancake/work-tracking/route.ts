@@ -23,6 +23,15 @@ import {
   type StaffEvaluation,
   type WorkReport,
 } from "@/features/pancake/types"
+import {
+  SHIFT_IDS,
+  mapScheduleWeek,
+  weekIdsForDates,
+} from "@/features/schedule/types"
+import {
+  evaluateSchedule,
+  type ActivityMap,
+} from "@/features/schedule/scoring"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -102,6 +111,48 @@ export async function GET(request: Request) {
     ? Math.max(...docs.map((doc) => doc.syncedAtMs ?? 0))
     : null
 
+  // ---- schedule (criteria 1 & 2): registered shifts vs real activity
+  const scheduleColl = adminDb().collection("workSchedules")
+  const weekIds = weekIdsForDates(dates)
+  const weekSnaps = weekIds.length
+    ? await adminDb()
+        .getAll(...weekIds.map((id) => scheduleColl.doc(id)))
+        .catch(() => [])
+    : []
+  const weeks = weekSnaps.map((snap) =>
+    mapScheduleWeek(snap.id, snap.exists ? snap.data() : undefined)
+  )
+
+  // per staff → date → shift-bucket activity, merged across both pages
+  const activity: ActivityMap = {}
+  for (const doc of docs) {
+    for (const byStaff of Object.values(mergeDayDoc(doc))) {
+      for (const [staffKey, byShift] of Object.entries(byStaff)) {
+        for (const sid of SHIFT_IDS) {
+          const cell = byShift[sid]
+          if (!cell || !cell.activityHits || !cell.firstActivityMs) continue
+          const perStaff = (activity[staffKey] ??= {})
+          const perDate = (perStaff[doc.date] ??= {})
+          const prev = perDate[sid]
+          perDate[sid] = {
+            firstMs: prev
+              ? Math.min(prev.firstMs, cell.firstActivityMs)
+              : cell.firstActivityMs,
+            lastMs: Math.max(prev?.lastMs ?? 0, cell.lastActivityMs),
+            hits: (prev?.hits ?? 0) + cell.activityHits,
+          }
+        }
+      }
+    }
+  }
+  const scheduleEval = evaluateSchedule(
+    weeks,
+    activity,
+    dates[0] ?? "",
+    dates[dates.length - 1] ?? "",
+    Math.min(toMs, Date.now())
+  )
+
   // ---- fold day docs into one bucket per staff
   const totals = new Map<string, AgentDayBucket>()
   for (const member of STAFF) totals.set(member.key, emptyBucket())
@@ -136,9 +187,20 @@ export async function GET(request: Request) {
     const tagRate =
       b.tagChecked > 0 ? (b.tagCorrect / b.tagChecked) * 100 : null
 
+    const sched = scheduleEval[member.key]
+    const hasSchedule = Boolean(sched?.hasSchedule)
+
     const criteria = [
-      evaluateCriterion("hours", null),
-      evaluateCriterion("attendance", null),
+      evaluateCriterion(
+        "hours",
+        hasSchedule ? sched!.hoursShort : null,
+        byTime(sched?.shortOffenders ?? [])
+      ),
+      evaluateCriterion(
+        "attendance",
+        hasSchedule ? sched!.attendanceValue : null,
+        byTime(sched?.attendanceOffenders ?? [])
+      ),
       evaluateCriterion("report", null),
       evaluateCriterion("replyOnTime", onTimeRate, byTime(b.slowEvents)),
       evaluateCriterion(
@@ -172,6 +234,16 @@ export async function GET(request: Request) {
         sampled: b.replied,
         demoConversations: b.demoConversations,
         demoClosed: b.demoClosed,
+        schedule: hasSchedule
+          ? {
+              registeredShifts: sched!.registeredShifts,
+              expectedHours: sched!.expectedHours,
+              workedHours: sched!.workedHours,
+              hoursShort: sched!.hoursShort,
+              lateCount: sched!.lateCount,
+              noShowCount: sched!.noShowCount,
+            }
+          : undefined,
       },
     }
   })

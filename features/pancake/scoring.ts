@@ -87,7 +87,7 @@ export const CRITERIA: CriterionDef[] = [
       vuot: "Không thiếu giờ nào",
     },
     score: (value: number): Score => (value > 2 ? 1 : value > 0 ? 3 : 5),
-    pendingReason: "Cần lịch ca từng người",
+    pendingReason: "Chưa có lịch đăng ký cho kỳ này",
   },
   {
     id: "attendance",
@@ -98,12 +98,13 @@ export const CRITERIA: CriterionDef[] = [
     unit: "lần vi phạm",
     weight: 10,
     bands: {
-      kem: "Bỏ ca > 1 tiếng",
-      dat: "Muộn hoặc bỏ ca < 1h",
+      kem: "Bỏ ca (≥ 1 lần)",
+      dat: "Đi muộn 1–2 lần",
       vuot: "Không vi phạm lần nào",
     },
-    score: null,
-    pendingReason: "Cần lịch ca từng người",
+    // value = số lần muộn + 3 × số lần bỏ ca, nên 1 lần bỏ ca đã là Kém
+    score: lowerBetter(0, 2),
+    pendingReason: "Chưa có lịch đăng ký cho kỳ này",
   },
   {
     id: "report",
