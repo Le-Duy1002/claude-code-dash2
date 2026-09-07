@@ -8,6 +8,17 @@
 
 Dashboard nội bộ Next.js + Firebase, giao diện tiếng Việt. Đội gồm **1 quản lý (Hoàng)** và **4 nhân viên sale (Duy, Hà, Quyến, Thương)**. Không có phân quyền phía máy chủ — mọi vai trò gác quyền phía client (quy ước). Tài liệu đồng bộ **hai chiều** với Google Drive; chiều Drive → web dùng **webhook gần realtime** kèm quét dự phòng.
 
+## Quyết định đã chốt (07/09/2026)
+
+- **Người phụ trách dự án:** 1 hoặc nhiều người đều được (UC-PRJ-01).
+- **Xoá / đóng dự án KHÔNG xoá thư mục Drive** — thư mục và tài liệu được giữ lại (UC-DOC-05).
+
+## Còn chờ quyết định
+
+- Có sinh mã dự án tự động (PRJ-2026-001…) không (UC-PRJ-01 TBD-2).
+- Số cột & nhãn cột Kanban — đề xuất mặc định: Chưa bắt đầu / Đang thực hiện / Hoàn thành (UC-TSK-03 TBD-1).
+- Nơi host endpoint webhook + chu kỳ gia hạn kênh Drive (UC-DOC-02, UC-DOC-03).
+
 ## Actor
 
 | Actor | Vai trò |
@@ -44,7 +55,7 @@ Dashboard nội bộ Next.js + Firebase, giao diện tiếng Việt. Đội gồ
 
 ## Tóm tắt từng Use Case
 
-1. **UC-PRJ-01 Tạo dự án mới** — Quản lý nhập tên/mô tả/mốc thời gian/người phụ trách → hệ thống lưu dự án "Đang chạy" và tạo thư mục Drive riêng (qua UC-DOC-05). Chặn: thiếu tên, ngày kết thúc trước ngày bắt đầu. Nếu tạo thư mục lỗi thì dự án vẫn lưu, đánh dấu "chưa có thư mục".
+1. **UC-PRJ-01 Tạo dự án mới** — Quản lý nhập tên/mô tả/mốc thời gian và chọn **một hoặc nhiều** người phụ trách → hệ thống lưu dự án "Đang chạy" và tạo thư mục Drive riêng (qua UC-DOC-05). Chặn: thiếu tên, thiếu người phụ trách, ngày kết thúc trước ngày bắt đầu. Nếu tạo thư mục lỗi thì dự án vẫn lưu, đánh dấu "chưa có thư mục".
 2. **UC-PRJ-02 Xem danh sách dự án** — Hiển thị mọi dự án kèm tiến độ "x/y công việc hoàn thành" và cờ "Quá hạn"; lọc theo khoảng thời gian. Trạng thái trống → mời tạo dự án đầu tiên.
 3. **UC-TSK-01 Thêm công việc vào dự án** — Quản lý thêm công việc (tiêu đề, người đảm nhiệm, độ ưu tiên, mốc thời gian) → lưu ở "Chưa bắt đầu", gắn dự án. Chặn: thiếu tiêu đề / người đảm nhiệm. Cảnh báo (không chặn): hạn công việc trễ hơn hạn dự án.
 4. **UC-TSK-02 Xem và lọc bảng công việc** — Bảng mọi công việc của dự án, lọc theo trạng thái / độ ưu tiên / người đảm nhiệm / thời gian; cột "Còn N ngày" hoặc "Quá hạn N ngày" (việc đã hoàn thành không cảnh báo); bộ lọc rỗng → bảng trống có thông báo.
@@ -53,7 +64,7 @@ Dashboard nội bộ Next.js + Firebase, giao diện tiếng Việt. Đội gồ
 7. **UC-DOC-02 Đồng bộ Drive → web (webhook)** — Ai đó đổi tệp thẳng trong thư mục Drive → Google gửi thông báo → hệ thống đọc lại thư mục, thêm/gỡ/cập nhật bản ghi tài liệu trong vài giây; tệp tải từ web không bị nhân đôi. Mất quyền đọc Drive → giữ nguyên danh sách cũ, ghi cảnh báo.
 8. **UC-DOC-03 Gia hạn kênh theo dõi** — Tác vụ định kỳ đăng ký kênh mới trước khi kênh cũ hết hạn (~7 ngày) để UC-DOC-02 không đứt. Đăng ký lỗi → thử lại lần sau, tạm dựa vào UC-DOC-04.
 9. **UC-DOC-04 Quét đối chiếu dự phòng** — Tác vụ định kỳ thưa (mỗi giờ) quét mọi thư mục dự án và đồng bộ lại danh sách web cho khớp Drive, bù cho các thông báo webhook bị mất. Quá thời gian chạy → làm dở đến đâu lưu đến đó, tiếp tục lần sau.
-10. **UC-DOC-05 Khởi tạo thư mục tài liệu** — Tạo thư mục con trong thư mục gốc ứng dụng (phạm vi `drive.file`), liên kết id với dự án, đăng ký kênh theo dõi. Gọi bởi UC-PRJ-01 hoặc chạy độc lập khi tạo lại.
+10. **UC-DOC-05 Khởi tạo thư mục tài liệu** — Tạo thư mục con trong thư mục gốc ứng dụng (phạm vi `drive.file`), liên kết id với dự án, đăng ký kênh theo dõi. Gọi bởi UC-PRJ-01 hoặc chạy độc lập khi tạo lại. **Xoá dự án không xoá thư mục này.**
 11. **UC-CMT-01 Đăng bình luận / phản hồi** — Thành viên viết bình luận trên công việc, hoặc phản hồi lồng dưới một bình luận có sẵn; kèm tên người + thời điểm. Chặn: nội dung rỗng.
 12. **UC-CMT-02 Xoá bình luận** — Người viết (hoặc quản lý) xoá bình luận của mình. Nếu còn phản hồi con → gỡ nội dung, đánh dấu "đã xoá", giữ các phản hồi. Không phải người viết / không phải quản lý → không thấy nút xoá.
 

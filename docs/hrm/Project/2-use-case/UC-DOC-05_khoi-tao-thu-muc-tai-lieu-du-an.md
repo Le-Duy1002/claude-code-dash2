@@ -47,6 +47,8 @@
 ## Assumptions
 1. Thư mục gốc của ứng dụng đã được `scripts/create-drive-folder.mjs` tạo sẵn.
 2. Mỗi dự án đúng một thư mục, không lồng nhiều cấp.
+3. Xoá dự án **không** xoá thư mục Drive — thư mục và toàn bộ tài liệu được giữ lại (đã chốt 07/09/2026).
 
 ## Notes and Issues
-- **[TBD-1]** Xoá dự án có xoá luôn thư mục Drive không? | vòng sau
+- ~~[TBD-1] Xoá dự án có xoá luôn thư mục Drive không?~~ → **Đã chốt (07/09/2026): KHÔNG.** Khi xoá / đóng dự án, chỉ gỡ bản ghi dự án và ngừng kênh theo dõi; thư mục Drive và tài liệu vẫn còn trong thư mục gốc của ứng dụng.
+

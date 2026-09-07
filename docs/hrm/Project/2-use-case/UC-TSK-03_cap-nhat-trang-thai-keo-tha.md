@@ -51,4 +51,5 @@
 2. Kéo-thả chỉ đổi trạng thái, không đổi thứ tự ưu tiên trong cột (vòng sau).
 
 ## Notes and Issues
-- **[TBD-1]** Số cột và nhãn cột Kanban cuối cùng | Owner: Hoàng
+- **[TBD-1]** Số cột và nhãn cột Kanban cuối cùng | Owner: Hoàng | Chưa quyết
+  - *Đề xuất mặc định (theo trạng thái công việc hiện có):* 3 cột — **Chưa bắt đầu · Đang thực hiện · Hoàn thành**.

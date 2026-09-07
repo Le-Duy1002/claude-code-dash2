@@ -79,7 +79,8 @@
 ### Ghi chú
 
 - Do phạm vi quyền Drive (`drive.file`), thư mục dự án **phải do ứng dụng tự tạo** (không gắn thư mục có sẵn) — giống thư mục thư viện hiện tại.
-- Cần bàn: người phụ trách là 1 hay nhiều người.
+- **Đã chốt (07/09/2026):** một dự án có 1 hoặc nhiều người phụ trách.
+- **Đã chốt (07/09/2026):** xoá / đóng dự án **không** xoá thư mục Drive của dự án.
 
 ---
 
