@@ -9,7 +9,6 @@ import {
   PencilIcon,
   PlusIcon,
   RepeatIcon,
-  Trash2Icon,
   UnlockIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -25,7 +24,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -51,6 +49,7 @@ import {
   SHIFT_DEFS,
   SHIFT_IDS,
   WEEKDAY_LABELS,
+  WEEKDAY_SHORT,
   formatHours,
   getCell,
   registeredHours,
@@ -58,7 +57,6 @@ import {
   weekDates,
   weekEndDate,
   weekLabel,
-  type OvertimeEntry,
   type ScheduleWeek,
   type ShiftId,
 } from "../types"
@@ -68,21 +66,10 @@ const CELL_OPTIONS = [
   { value: NONE, label: "— trống —" },
   ...SCHEDULE_STAFF.map((s) => ({ value: s.key, label: s.name })),
 ]
-const DAY_OPTIONS = WEEKDAY_LABELS.map((label, i) => ({
-  value: String(i),
-  label,
-}))
-const STAFF_OPTIONS = SCHEDULE_STAFF.map((s) => ({ value: s.key, label: s.name }))
+const HOUR_CHOICES = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
-function newOvertimeRow(): OvertimeEntry {
-  return {
-    id: Math.random().toString(36).slice(2, 10),
-    staffKey: SCHEDULE_STAFF[0]?.key ?? "",
-    dayIndex: 0,
-    hours: 1,
-    note: "",
-  }
-}
+const POPUP_CLASS =
+  "z-50 rounded-lg border bg-popover p-2 text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95"
 
 export function WeekGrid({ week, actor }: { week: ScheduleWeek; actor: Actor }) {
   const dates = weekDates(week.weekId)
@@ -584,6 +571,163 @@ function WeekControls({
 }
 
 // -------------------------------------------------------------- overtime
+// Grouped by staff. Add: "＋" → pick a weekday → pick 1–9h. Each pick saves
+// immediately (one entry per staff+day).
+
+function HoursGrid({
+  value,
+  onPick,
+}: {
+  value?: number
+  onPick: (hours: number) => void
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-1">
+      {HOUR_CHOICES.map((h) => (
+        <button
+          key={h}
+          type="button"
+          onClick={() => onPick(h)}
+          className={cn(
+            "h-8 rounded-md border text-sm tabular-nums transition-colors hover:bg-accent hover:text-accent-foreground",
+            value === h && "border-primary bg-primary text-primary-foreground"
+          )}
+        >
+          {h}h
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function OvertimeChip({
+  dayIndex,
+  hours,
+  editable,
+  onSet,
+  onRemove,
+}: {
+  dayIndex: number
+  hours: number
+  editable: boolean
+  onSet: (hours: number) => void
+  onRemove: () => void
+}) {
+  const [open, setOpen] = React.useState(false)
+  const label = `${WEEKDAY_SHORT[dayIndex]} · ${hours}h`
+
+  if (!editable) {
+    return <Badge variant="secondary">{label}</Badge>
+  }
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger
+        render={
+          <button
+            type="button"
+            className="inline-flex items-center rounded-md border bg-secondary px-1.5 py-0.5 text-xs font-medium text-secondary-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          />
+        }
+      >
+        {label}
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner sideOffset={4} className="z-50">
+          <Popover.Popup className={cn(POPUP_CLASS, "w-40")}>
+            <p className="mb-1 text-xs font-medium">
+              {WEEKDAY_LABELS[dayIndex]} — số giờ
+            </p>
+            <HoursGrid
+              value={hours}
+              onPick={(h) => {
+                onSet(h)
+                setOpen(false)
+              }}
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              className="mt-1 w-full text-destructive"
+              onClick={() => {
+                onRemove()
+                setOpen(false)
+              }}
+            >
+              Xoá
+            </Button>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  )
+}
+
+function AddOvertime({
+  onAdd,
+}: {
+  onAdd: (dayIndex: number, hours: number) => void
+}) {
+  const [open, setOpen] = React.useState(false)
+  const [day, setDay] = React.useState<number | null>(null)
+
+  React.useEffect(() => {
+    if (!open) setDay(null)
+  }, [open])
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger
+        render={<Button size="icon-sm" variant="outline" className="shrink-0" />}
+      >
+        <PlusIcon />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner sideOffset={4} className="z-50">
+          <Popover.Popup className={cn(POPUP_CLASS, "w-52")}>
+            {day === null ? (
+              <>
+                <p className="mb-1 text-xs font-medium">Chọn thứ</p>
+                <div className="grid grid-cols-4 gap-1">
+                  {WEEKDAY_SHORT.map((d, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setDay(i)}
+                      className="h-8 rounded-md border text-xs transition-colors hover:bg-accent hover:text-accent-foreground"
+                    >
+                      {d}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="mb-1 text-xs font-medium">
+                  {WEEKDAY_LABELS[day]} — số giờ
+                </p>
+                <HoursGrid
+                  onPick={(h) => {
+                    onAdd(day, h)
+                    setOpen(false)
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="mt-1 w-full"
+                  onClick={() => setDay(null)}
+                >
+                  ← Chọn thứ khác
+                </Button>
+              </>
+            )}
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  )
+}
 
 function OvertimeEditor({
   week,
@@ -596,158 +740,70 @@ function OvertimeEditor({
   editable: boolean
   reason: string | null
 }) {
-  const [rows, setRows] = React.useState<OvertimeEntry[]>(week.overtime)
-  const [busy, setBusy] = React.useState(false)
-  // resync only when the stored week actually changes, not on every parent render
-  React.useEffect(() => {
-    setRows(week.overtime)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [week.weekId, week.updatedAtMs])
-
-  const dirty = JSON.stringify(rows) !== JSON.stringify(week.overtime)
-
-  async function save() {
-    setBusy(true)
+  async function setHours(staffKey: string, dayIndex: number, hours: number) {
+    const next = week.overtime.filter(
+      (e) => !(e.staffKey === staffKey && e.dayIndex === dayIndex)
+    )
+    if (hours > 0) {
+      next.push({ id: `${staffKey}-${dayIndex}`, staffKey, dayIndex, hours, note: "" })
+    }
+    next.sort((a, b) =>
+      a.staffKey === b.staffKey
+        ? a.dayIndex - b.dayIndex
+        : a.staffKey.localeCompare(b.staffKey)
+    )
+    const who = `${staffName(staffKey)} ${WEEKDAY_LABELS[dayIndex]}`
     try {
-      const clean = rows
-        .map((r) => ({ ...r, hours: Number(r.hours) || 0 }))
-        .filter((r) => r.staffKey && r.hours > 0)
       await setOvertime(
         week,
-        clean,
+        next,
         actor,
-        `Cập nhật giờ làm thêm (${clean.length} dòng)`,
-        clean.length === 1 ? clean[0].staffKey : null,
+        hours > 0
+          ? `Giờ làm thêm: ${who} — ${hours}h`
+          : `Bỏ giờ làm thêm: ${who}`,
+        staffKey,
         reason
       )
-      toast.success("Đã lưu giờ làm thêm")
     } catch (error) {
       toast.error(`Không lưu được: ${(error as Error).message}`)
-    } finally {
-      setBusy(false)
     }
   }
+
+  const total = week.overtime.reduce((s, e) => s + (Number(e.hours) || 0), 0)
 
   return (
     <div className="flex flex-col gap-1.5">
       <p className="text-xs font-medium text-muted-foreground">
-        Giờ làm thêm (có cấu trúc)
+        Giờ làm thêm{total > 0 ? ` — tổng ${formatHours(total)}` : ""}
       </p>
-      {rows.length === 0 ? (
-        <p className="text-xs text-muted-foreground">Chưa có.</p>
-      ) : (
-        <ul className="flex flex-col gap-1">
-          {rows.map((row, i) => (
-            <li key={row.id} className="flex flex-wrap items-center gap-1">
-              <Select
-                items={STAFF_OPTIONS}
-                value={row.staffKey}
-                onValueChange={(v) =>
-                  setRows((rs) =>
-                    rs.map((r, j) => (j === i ? { ...r, staffKey: v ?? "" } : r))
-                  )
-                }
-                disabled={!editable}
-              >
-                <SelectTrigger size="sm" className="w-24">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {STAFF_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              <Select
-                items={DAY_OPTIONS}
-                value={String(row.dayIndex)}
-                onValueChange={(v) =>
-                  setRows((rs) =>
-                    rs.map((r, j) =>
-                      j === i ? { ...r, dayIndex: Number(v) } : r
-                    )
-                  )
-                }
-                disabled={!editable}
-              >
-                <SelectTrigger size="sm" className="w-20">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {DAY_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              <Input
-                type="number"
-                min={0}
-                step={0.5}
-                value={row.hours}
-                onChange={(e) =>
-                  setRows((rs) =>
-                    rs.map((r, j) =>
-                      j === i ? { ...r, hours: Number(e.target.value) } : r
-                    )
-                  )
-                }
-                disabled={!editable}
-                className="h-7 w-16"
-              />
-              <span className="text-xs text-muted-foreground">giờ</span>
-              <Input
-                value={row.note}
-                onChange={(e) =>
-                  setRows((rs) =>
-                    rs.map((r, j) =>
-                      j === i ? { ...r, note: e.target.value } : r
-                    )
-                  )
-                }
-                disabled={!editable}
-                placeholder="ghi chú"
-                className="h-7 flex-1 min-w-[6rem]"
-              />
+      <ul className="flex flex-col gap-1.5">
+        {SCHEDULE_STAFF.map((s) => {
+          const mine = week.overtime
+            .filter((e) => e.staffKey === s.key)
+            .sort((a, b) => a.dayIndex - b.dayIndex)
+          return (
+            <li key={s.key} className="flex flex-wrap items-center gap-1">
+              <span className="w-12 shrink-0 text-sm font-medium">{s.name}</span>
+              {mine.map((e) => (
+                <OvertimeChip
+                  key={e.dayIndex}
+                  dayIndex={e.dayIndex}
+                  hours={e.hours}
+                  editable={editable}
+                  onSet={(h) => setHours(s.key, e.dayIndex, h)}
+                  onRemove={() => setHours(s.key, e.dayIndex, 0)}
+                />
+              ))}
+              {mine.length === 0 && !editable ? (
+                <span className="text-xs text-muted-foreground">—</span>
+              ) : null}
               {editable ? (
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  onClick={() =>
-                    setRows((rs) => rs.filter((_, j) => j !== i))
-                  }
-                >
-                  <Trash2Icon />
-                </Button>
+                <AddOvertime onAdd={(day, h) => setHours(s.key, day, h)} />
               ) : null}
             </li>
-          ))}
-        </ul>
-      )}
-      {editable ? (
-        <div className="flex gap-1.5">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setRows((rs) => [...rs, newOvertimeRow()])}
-          >
-            <PlusIcon data-icon="inline-start" />
-            Thêm dòng
-          </Button>
-          {dirty ? (
-            <Button size="sm" disabled={busy} onClick={save}>
-              Lưu
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+          )
+        })}
+      </ul>
     </div>
   )
 }

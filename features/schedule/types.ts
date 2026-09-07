@@ -55,6 +55,8 @@ export const WEEKDAY_LABELS = [
   "Chủ nhật",
 ]
 
+export const WEEKDAY_SHORT = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]
+
 export const MONTH_LABELS = Array.from(
   { length: 12 },
   (_, i) => `Tháng ${i + 1}`
