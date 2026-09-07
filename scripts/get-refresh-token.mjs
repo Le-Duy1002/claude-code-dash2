@@ -1,11 +1,15 @@
 // One-time helper: obtain a Google OAuth refresh token for Drive writes.
 //   1. put GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET in .env.local
-//   2. node --env-file=.env.local scripts/get-refresh-token.mjs
+//   2. node --env-file=.env.local scripts/get-refresh-token.mjs [ENV_VAR_NAME]
 //   3. open the printed URL, sign in as the folder owner, allow access
-//   4. paste the printed GOOGLE_OAUTH_REFRESH_TOKEN line into .env.local
+//   4. paste the printed line into .env.local
+//
+// Pass an env-var name to label the output for a second Drive identity, e.g.
+//   node --env-file=.env.local scripts/get-refresh-token.mjs GOOGLE_OAUTH_PROJECTS_REFRESH_TOKEN
 import http from "node:http"
 import { google } from "googleapis"
 
+const OUT_VAR = process.argv[2] || "GOOGLE_OAUTH_REFRESH_TOKEN"
 const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID
 const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET
 const PORT = 5555
@@ -45,7 +49,7 @@ const server = http.createServer(async (req, res) => {
     res.end("Done — you can close this tab and go back to the terminal.")
     if (tokens.refresh_token) {
       console.log("\n--- copy into .env.local ---")
-      console.log(`GOOGLE_OAUTH_REFRESH_TOKEN=${tokens.refresh_token}`)
+      console.log(`${OUT_VAR}=${tokens.refresh_token}`)
       console.log("----------------------------\n")
     } else {
       console.error(
