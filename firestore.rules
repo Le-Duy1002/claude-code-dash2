@@ -1,27 +1,35 @@
 rules_version = '2';
 
-// Reference copy of the Firestore security rules. Firestore rules are not
-// deployed from this repo automatically — paste this into
-// Firebase console -> Firestore Database -> Rules -> Publish, or run
-// `firebase deploy --only firestore:rules` if the Firebase CLI is set up.
+// Nguồn chuẩn của Firestore security rules. Rules KHÔNG tự deploy từ repo —
+// sau khi sửa file này, dán toàn bộ nội dung vào
+// Firebase console -> Firestore Database -> Rules -> Publish,
+// hoặc chạy `firebase deploy --only firestore:rules` nếu đã cài Firebase CLI.
+//
+// Mô hình phân quyền: app không có auth phía máy chủ. Dữ liệu cá nhân
+// (users, tasks) khoá theo chủ sở hữu; dữ liệu dùng chung của đội
+// (lịch làm việc, dự án, công việc dự án) cho mọi tài khoản đã đăng nhập
+// đọc/ghi. Dữ liệu do Admin SDK ghi (documents, pancakeAgentDaily) chặn
+// ghi từ client.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // User profiles (lib/user.ts). Anyone signed in may read; only the owner writes.
+    // ---------------------------------------------------------- cá nhân
+
+    // Hồ sơ người dùng (lib/user.ts). Ai đăng nhập cũng đọc; chỉ chủ ghi.
     match /users/{uid} {
       allow read: if request.auth != null;
       allow write: if request.auth != null && request.auth.uid == uid;
     }
 
-    // Tasks are scoped to their owner.
+    // Công việc cá nhân — khoá theo ownerUid.
     match /tasks/{taskId} {
       allow read, update, delete: if request.auth != null
         && resource.data.ownerUid == request.auth.uid;
       allow create: if request.auth != null
         && request.resource.data.ownerUid == request.auth.uid;
 
-      // Threaded comments on a task the caller owns.
+      // Bình luận phân luồng trên công việc mà người gọi sở hữu.
       match /comments/{commentId} {
         allow read: if request.auth != null
           && get(/databases/$(database)/documents/tasks/$(taskId)).data.ownerUid == request.auth.uid;
@@ -32,12 +40,49 @@ service cloud.firestore {
       }
     }
 
-    // Document library — a server-maintained mirror of the shared Google Drive
-    // folder. Every signed-in member reads it; only the Admin SDK (which bypasses
-    // rules) writes, so client writes are denied.
+    // ---------------------------------------------------------- dùng chung của đội
+
+    // Lịch làm việc — nhân viên tự đăng ký, ai đăng nhập cũng sửa được.
+    match /workSchedules/{weekId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Nhật ký chỉnh lịch — chỉ đọc và thêm mới, không sửa/xoá (giữ vết).
+    match /workScheduleChanges/{changeId} {
+      allow read, create: if request.auth != null;
+      allow update, delete: if false;
+    }
+
+    // Dự án — mọi thành viên đăng nhập đọc/ghi.
+    match /projects/{projectId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Công việc trong dự án — dùng chung theo dự án, không khoá theo chủ.
+    match /projectTasks/{taskId} {
+      allow read, write: if request.auth != null;
+
+      // Bình luận trên công việc dự án (đợt bình luận sẽ dùng).
+      match /comments/{commentId} {
+        allow read, create: if request.auth != null;
+        allow delete: if request.auth != null
+          && resource.data.createdByUid == request.auth.uid;
+      }
+    }
+
+    // ---------------------------------------------------------- Admin SDK ghi
+
+    // Thư viện tài liệu — bản sao thư mục Google Drive do máy chủ đồng bộ.
+    // Ai đăng nhập cũng đọc; chỉ Admin SDK (bỏ qua rules) được ghi.
     match /documents/{docId} {
       allow read: if request.auth != null;
       allow write: if false;
+    }
+
+    // Tổng hợp hiệu suất Pancake theo ngày — chỉ Admin SDK ghi và các API
+    // route đọc bằng Admin SDK; client không truy cập trực tiếp.
+    match /pancakeAgentDaily/{date} {
+      allow read, write: if false;
     }
   }
 }
