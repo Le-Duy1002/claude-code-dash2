@@ -100,7 +100,7 @@ const data = {
     },
     {
       title: "Dự án",
-      url: "#",
+      url: "/du-an",
       icon: (
         <FolderIcon
         />

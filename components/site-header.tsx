@@ -9,6 +9,7 @@ const TITLES: Record<string, string> = {
   "/": "Trang chủ",
   "/dashboard": "Bảng điều khiển",
   "/dashboard/task": "Công việc",
+  "/du-an": "Dự án",
   "/lich-lam-viec": "Lịch làm việc",
   "/theo-doi-cong-viec": "Theo dõi công việc",
   "/nhat-ky-ai": "Nhật ký AI theo ngày",
@@ -17,6 +18,7 @@ const TITLES: Record<string, string> = {
 
 function titleFromPathname(pathname: string) {
   if (TITLES[pathname]) return TITLES[pathname]
+  if (pathname.startsWith("/du-an/")) return "Dự án"
   const last = pathname.split("/").filter(Boolean).pop() ?? "Trang chủ"
   return last.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
 }
