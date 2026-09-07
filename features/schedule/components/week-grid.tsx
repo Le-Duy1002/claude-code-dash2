@@ -663,17 +663,67 @@ function OvertimeChip({
   )
 }
 
-function AddOvertime({
-  onAdd,
-}: {
-  onAdd: (dayIndex: number, hours: number) => void
-}) {
+const SELECTED_CELL = "border-primary bg-primary text-primary-foreground"
+const GRID_CELL =
+  "h-8 rounded-md border text-xs transition-colors hover:bg-accent hover:text-accent-foreground"
+
+/** Multi-select with Shift-click extending a contiguous range from the anchor. */
+function useRangeSelect() {
+  const [selected, setSelected] = React.useState<Set<number>>(new Set())
+  const anchorRef = React.useRef<number | null>(null)
+
+  const toggle = React.useCallback((i: number, shift: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (shift && anchorRef.current !== null) {
+        const a = anchorRef.current
+        const lo = Math.min(a, i)
+        const hi = Math.max(a, i)
+        for (let d = lo; d <= hi; d += 1) next.add(d)
+      } else {
+        if (next.has(i)) next.delete(i)
+        else next.add(i)
+        anchorRef.current = i
+      }
+      return next
+    })
+  }, [])
+
+  const clear = React.useCallback(() => {
+    setSelected(new Set())
+    anchorRef.current = null
+  }, [])
+
+  const list = React.useMemo(
+    () => [...selected].sort((a, b) => a - b),
+    [selected]
+  )
+  return { selected, toggle, clear, list }
+}
+
+type OtRow = { dayIndex: number; hours: number }
+
+function AddOvertime({ onAddMany }: { onAddMany: (rows: OtRow[]) => void }) {
   const [open, setOpen] = React.useState(false)
-  const [day, setDay] = React.useState<number | null>(null)
+  const [step, setStep] = React.useState<"day" | "hour">("day")
+  const days = useRangeSelect()
+  const hours = useRangeSelect() // index into HOUR_CHOICES
 
   React.useEffect(() => {
-    if (!open) setDay(null)
+    if (!open) {
+      days.clear()
+      hours.clear()
+      setStep("day")
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
+
+  const hourVals = hours.list.map((i) => HOUR_CHOICES[i])
+  // one hour picked → every day gets it; a range → days ramp through the range
+  const preview: OtRow[] = days.list.map((dayIndex, i) => ({
+    dayIndex,
+    hours: hourVals[Math.min(i, hourVals.length - 1)] ?? 0,
+  }))
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
@@ -684,42 +734,87 @@ function AddOvertime({
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner sideOffset={4} className="z-50">
-          <Popover.Popup className={cn(POPUP_CLASS, "w-52")}>
-            {day === null ? (
+          <Popover.Popup className={cn(POPUP_CLASS, "w-56")}>
+            {step === "day" ? (
               <>
-                <p className="mb-1 text-xs font-medium">Chọn thứ</p>
+                <p className="mb-1 text-xs font-medium">
+                  Chọn thứ{" "}
+                  <span className="font-normal text-muted-foreground">
+                    (giữ Shift để chọn dãy)
+                  </span>
+                </p>
                 <div className="grid grid-cols-4 gap-1">
                   {WEEKDAY_SHORT.map((d, i) => (
                     <button
                       key={i}
                       type="button"
-                      onClick={() => setDay(i)}
-                      className="h-8 rounded-md border text-xs transition-colors hover:bg-accent hover:text-accent-foreground"
+                      onClick={(e) => days.toggle(i, e.shiftKey)}
+                      className={cn(GRID_CELL, days.selected.has(i) && SELECTED_CELL)}
                     >
                       {d}
                     </button>
                   ))}
                 </div>
+                <Button
+                  size="sm"
+                  className="mt-2 w-full"
+                  disabled={days.list.length === 0}
+                  onClick={() => setStep("hour")}
+                >
+                  Tiếp — {days.list.length} ngày →
+                </Button>
               </>
             ) : (
               <>
                 <p className="mb-1 text-xs font-medium">
-                  {WEEKDAY_LABELS[day]} — số giờ
+                  {days.list.map((i) => WEEKDAY_SHORT[i]).join(", ")} — số giờ{" "}
+                  <span className="font-normal text-muted-foreground">
+                    (Shift để mỗi ngày một mức tăng dần)
+                  </span>
                 </p>
-                <HoursGrid
-                  onPick={(h) => {
-                    onAdd(day, h)
-                    setOpen(false)
-                  }}
-                />
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="mt-1 w-full"
-                  onClick={() => setDay(null)}
-                >
-                  ← Chọn thứ khác
-                </Button>
+                <div className="grid grid-cols-3 gap-1">
+                  {HOUR_CHOICES.map((h, i) => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={(e) => hours.toggle(i, e.shiftKey)}
+                      className={cn(
+                        GRID_CELL,
+                        "tabular-nums",
+                        hours.selected.has(i) && SELECTED_CELL
+                      )}
+                    >
+                      {h}h
+                    </button>
+                  ))}
+                </div>
+                {hourVals.length > 1 ? (
+                  <p className="mt-1 text-[0.7rem] text-muted-foreground">
+                    {preview
+                      .map((r) => `${WEEKDAY_SHORT[r.dayIndex]} ${r.hours}h`)
+                      .join(" · ")}
+                  </p>
+                ) : null}
+                <div className="mt-2 flex gap-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setStep("day")}
+                  >
+                    ← Thứ
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="flex-1"
+                    disabled={hourVals.length === 0}
+                    onClick={() => {
+                      onAddMany(preview)
+                      setOpen(false)
+                    }}
+                  >
+                    Lưu
+                  </Button>
+                </div>
               </>
             )}
           </Popover.Popup>
@@ -740,27 +835,37 @@ function OvertimeEditor({
   editable: boolean
   reason: string | null
 }) {
-  async function setHours(staffKey: string, dayIndex: number, hours: number) {
+  async function applyRows(staffKey: string, rows: OtRow[]) {
+    if (rows.length === 0) return
+    const touched = new Set(rows.map((r) => r.dayIndex))
     const next = week.overtime.filter(
-      (e) => !(e.staffKey === staffKey && e.dayIndex === dayIndex)
+      (e) => !(e.staffKey === staffKey && touched.has(e.dayIndex))
     )
-    if (hours > 0) {
-      next.push({ id: `${staffKey}-${dayIndex}`, staffKey, dayIndex, hours, note: "" })
+    for (const r of rows) {
+      if (r.hours > 0) {
+        next.push({
+          id: `${staffKey}-${r.dayIndex}`,
+          staffKey,
+          dayIndex: r.dayIndex,
+          hours: r.hours,
+          note: "",
+        })
+      }
     }
     next.sort((a, b) =>
       a.staffKey === b.staffKey
         ? a.dayIndex - b.dayIndex
         : a.staffKey.localeCompare(b.staffKey)
     )
-    const who = `${staffName(staffKey)} ${WEEKDAY_LABELS[dayIndex]}`
+    const label = rows
+      .map((r) => `${WEEKDAY_SHORT[r.dayIndex]} ${r.hours > 0 ? `${r.hours}h` : "bỏ"}`)
+      .join(", ")
     try {
       await setOvertime(
         week,
         next,
         actor,
-        hours > 0
-          ? `Giờ làm thêm: ${who} — ${hours}h`
-          : `Bỏ giờ làm thêm: ${who}`,
+        `Giờ làm thêm ${staffName(staffKey)}: ${label}`,
         staffKey,
         reason
       )
@@ -790,15 +895,17 @@ function OvertimeEditor({
                   dayIndex={e.dayIndex}
                   hours={e.hours}
                   editable={editable}
-                  onSet={(h) => setHours(s.key, e.dayIndex, h)}
-                  onRemove={() => setHours(s.key, e.dayIndex, 0)}
+                  onSet={(h) => applyRows(s.key, [{ dayIndex: e.dayIndex, hours: h }])}
+                  onRemove={() =>
+                    applyRows(s.key, [{ dayIndex: e.dayIndex, hours: 0 }])
+                  }
                 />
               ))}
               {mine.length === 0 && !editable ? (
                 <span className="text-xs text-muted-foreground">—</span>
               ) : null}
               {editable ? (
-                <AddOvertime onAdd={(day, h) => setHours(s.key, day, h)} />
+                <AddOvertime onAddMany={(rows) => applyRows(s.key, rows)} />
               ) : null}
             </li>
           )
