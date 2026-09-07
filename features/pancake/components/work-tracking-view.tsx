@@ -224,8 +224,8 @@ function DrillPanel({
             <div className="mb-1 flex items-center justify-between gap-2">
               <p className="text-xs font-medium text-muted-foreground">
                 Hội thoại làm mất điểm ({result.offenders.length}
-                {result.offenders.length >= 40 ? "+" : ""}) — bấm tên khách hoặc{" "}
-                <ExternalLinkIcon className="inline size-3" /> để mở hội thoại
+                {result.offenders.length >= 40 ? "+" : ""}) — bấm tên để copy
+                tên, bấm ID để copy ID hội thoại
               </p>
               <button
                 type="button"
@@ -233,7 +233,7 @@ function DrillPanel({
                 className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
                 aria-expanded={showDetails}
               >
-                {showDetails ? "Ẩn ID & link" : "Hiện ID & link"}
+                {showDetails ? "Ẩn ID hội thoại" : "Hiện ID hội thoại"}
                 <ChevronDownIcon
                   className={cn(
                     "size-3.5 transition-transform",
@@ -246,34 +246,33 @@ function DrillPanel({
               {grouped.map((e, i) => {
                 const link = pancakeConvLink(e.pageId, e.conversationId)
                 return (
-                  <li key={i} className="flex flex-col gap-1 px-2.5 py-1.5">
+                  <li key={i} className="flex flex-col gap-0.5 px-2.5 py-1.5">
                     <div className="flex flex-wrap items-baseline gap-x-2">
                       <span className="tabular-nums text-muted-foreground">
                         {formatDateTime(e.atMs)}
                       </span>
-                      {link ? (
-                        <a
-                          href={link}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-baseline gap-1 font-medium underline-offset-2 hover:underline"
-                          title="Mở hội thoại trên Pancake"
-                        >
-                          {e.label}
-                          <ExternalLinkIcon className="size-3.5 self-center" />
-                        </a>
-                      ) : (
-                        <span className="font-medium">{e.label}</span>
-                      )}
                       <button
                         type="button"
                         onClick={() =>
                           copyText(e.label, `Đã copy tên: ${e.label}`)
                         }
-                        className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                        className="font-medium underline-offset-2 hover:underline"
+                        title="Bấm để copy tên khách"
                       >
-                        copy tên
+                        {e.label}
                       </button>
+                      {link ? (
+                        <a
+                          href={link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
+                          title="Mở hội thoại trên Pancake"
+                        >
+                          <ExternalLinkIcon className="size-3.5" />
+                          Pancake
+                        </a>
+                      ) : null}
                       {e.detail ? (
                         <span className="text-destructive">— {e.detail}</span>
                       ) : null}
@@ -281,33 +280,20 @@ function DrillPanel({
                         <span className="text-muted-foreground">×{e.count}</span>
                       ) : null}
                     </div>
-                    {showDetails ? (
-                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-1 text-[0.7rem] text-muted-foreground">
-                        {e.customerId ? (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              copyText(e.customerId!, "Đã copy ID khách")
-                            }
-                            className="font-mono underline-offset-2 hover:underline"
-                            title="Bấm để copy ID khách"
-                          >
-                            ID: {e.customerId}
-                          </button>
-                        ) : null}
-                        {link ? (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              copyText(link, "Đã copy link hội thoại")
-                            }
-                            className="underline-offset-2 hover:underline"
-                            title="Bấm để copy link hội thoại"
-                          >
-                            Copy link hội thoại
-                          </button>
-                        ) : null}
-                      </div>
+                    {showDetails && e.conversationId ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          copyText(
+                            e.conversationId!,
+                            "Đã copy ID hội thoại"
+                          )
+                        }
+                        className="w-fit font-mono text-[0.7rem] text-muted-foreground underline-offset-2 hover:underline"
+                        title="Bấm để copy ID hội thoại"
+                      >
+                        ID: {e.conversationId}
+                      </button>
                     ) : null}
                   </li>
                 )
