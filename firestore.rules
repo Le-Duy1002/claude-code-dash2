@@ -81,6 +81,27 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ---------------------------------------------------------- Bảng lương
+    // Khác các phần khác: có kiểm soát phía máy chủ vì liên quan tiền.
+    // Chỉ tài khoản quản trị được định danh đọc; mọi ghi qua Admin SDK.
+    function isPayrollAdmin() {
+      return request.auth != null
+        && request.auth.token.email in ['hoangthang0m@gmail.com'];
+    }
+
+    match /payrollPeriods/{periodId} {
+      allow read: if isPayrollAdmin();
+      allow write: if false;
+    }
+    match /payrollConfig/{doc} {
+      allow read: if isPayrollAdmin();
+      allow write: if false;
+    }
+    match /payrollChanges/{changeId} {
+      allow read: if isPayrollAdmin();
+      allow write: if false;
+    }
+
     // ---------------------------------------------------------- Admin SDK ghi
 
     // Thư viện tài liệu — bản sao thư mục Google Drive do máy chủ đồng bộ.

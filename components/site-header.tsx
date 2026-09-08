@@ -13,6 +13,7 @@ const TITLES: Record<string, string> = {
   "/lich-lam-viec": "Lịch làm việc",
   "/theo-doi-cong-viec": "Theo dõi công việc",
   "/nhat-ky-ai": "Nhật ký AI theo ngày",
+  "/bang-luong": "Bảng lương",
   "/documents": "Tài liệu",
 }
 

@@ -182,3 +182,143 @@ export function evaluateSchedule(
   }
   return out
 }
+
+// ---------------------------------------------------------------- payroll input
+// Feeds the salary calculation (feature #4). Same window math as
+// `evaluateSchedule`, but classifies each finished shift into the payroll
+// discipline buckets and splits worked hours into normal vs "giờ cuối ca"
+// (the final hour of the shift window, paid double).
+//
+// Rules (user, 08/09/2026):
+//  - Đến muộn        = vào ca trễ 10..<60′, tổng vắng mặt < 60′.
+//  - Bỏ ca 1–1,5h    = tổng vắng mặt 60..<90′.
+//  - Bỏ ca ≥ 1,5h    = tổng vắng mặt ≥ 90′ (gồm ca bỏ hẳn).
+// "Vắng mặt" = phần khung ca ngoài đoạn [firstMs, lastMs] (vào muộn + về sớm).
+
+/** Absence threshold (minutes) splitting the two "bỏ ca" tiers. Tunable. */
+export const LONG_ABSENCE_MIN = 90
+/** Absence at/above this (minutes) is a "bỏ ca", below it is at most "đến muộn". */
+export const SHIFT_ABSENCE_MIN = 60
+
+export type PayrollShiftAgg = {
+  countedShifts: number
+  excludedShifts: number
+  /** worked hours inside the shift window (sum, clamped) */
+  paidHours: number
+  /** of `paidHours`, the part inside the final hour of the shift window */
+  paidLastHourHours: number
+  /** registered shift-length hours for finished, non-excluded shifts */
+  expectedHours: number
+  lateCount: number
+  shortAbsenceCount: number
+  longAbsenceCount: number
+  noShowCount: number
+  offenders: ScheduleOffender[]
+}
+
+function emptyPayrollAgg(): PayrollShiftAgg {
+  return {
+    countedShifts: 0,
+    excludedShifts: 0,
+    paidHours: 0,
+    paidLastHourHours: 0,
+    expectedHours: 0,
+    lateCount: 0,
+    shortAbsenceCount: 0,
+    longAbsenceCount: 0,
+    noShowCount: 0,
+    offenders: [],
+  }
+}
+
+const overlapMs = (a0: number, a1: number, b0: number, b1: number) =>
+  Math.max(0, Math.min(a1, b1) - Math.max(a0, b0))
+
+/**
+ * Per-staff shift aggregates for payroll over `[fromIso, toIso]`. Only shifts
+ * whose window has ended (`endMs <= nowMs`) and that are not flagged "đổi ca"
+ * count.
+ */
+export function evaluatePayrollShifts(
+  weeks: ScheduleWeek[],
+  activity: ActivityMap,
+  fromIso: string,
+  toIso: string,
+  nowMs: number = Date.now()
+): Record<string, PayrollShiftAgg> {
+  const out: Record<string, PayrollShiftAgg> = {}
+  const get = (key: string) => (out[key] ??= emptyPayrollAgg())
+
+  for (const week of weeks) {
+    const dates = weekDates(week.weekId)
+    dates.forEach((date, dayIndex) => {
+      if (date < fromIso || date > toIso) return
+      for (const shift of SHIFT_IDS) {
+        const cell = getCell(week, dayIndex, shift)
+        if (!cell.staff) continue
+        const row = get(cell.staff)
+        if (cell.excludeFromScore) {
+          row.excludedShifts += 1
+          continue
+        }
+        const win = vnShiftWindowMs(date, shift)
+        if (win.endMs > nowMs) continue
+
+        const expected = SHIFT_DEFS[shift].hours
+        row.countedShifts += 1
+        row.expectedHours += expected
+        const label = shiftLabel(shift, dayIndex, date)
+
+        const act = activity[cell.staff]?.[date]?.[shift]
+        if (!act || act.hits === 0 || !act.firstMs) {
+          row.noShowCount += 1
+          row.longAbsenceCount += 1
+          row.offenders.push({ atMs: win.startMs, label, detail: "bỏ ca (không có hoạt động)" })
+          continue
+        }
+
+        const first = Math.max(act.firstMs, win.startMs)
+        const last = Math.min(Math.max(act.lastMs, act.firstMs), win.endMs)
+        const workedMs = Math.max(0, last - first)
+        row.paidHours += workedMs / 3_600_000
+        row.paidLastHourHours +=
+          overlapMs(first, last, win.endMs - 3_600_000, win.endMs) / 3_600_000
+
+        const windowMin = (win.endMs - win.startMs) / 60_000
+        const lateMin = Math.max(0, (act.firstMs - win.startMs) / 60_000)
+        const earlyMin = Math.max(0, (win.endMs - Math.min(act.lastMs, win.endMs)) / 60_000)
+        const absenceMin = Math.min(windowMin, lateMin + earlyMin)
+
+        if (absenceMin >= LONG_ABSENCE_MIN) {
+          row.longAbsenceCount += 1
+          row.offenders.push({
+            atMs: win.startMs,
+            label,
+            detail: `bỏ ca ~${Math.round(absenceMin)}′ (vào muộn ${Math.round(lateMin)}′, về sớm ${Math.round(earlyMin)}′)`,
+          })
+        } else if (absenceMin >= SHIFT_ABSENCE_MIN) {
+          row.shortAbsenceCount += 1
+          row.offenders.push({
+            atMs: win.startMs,
+            label,
+            detail: `bỏ ca ~${Math.round(absenceMin)}′ (vào muộn ${Math.round(lateMin)}′, về sớm ${Math.round(earlyMin)}′)`,
+          })
+        } else if (lateMin >= LATE_GRACE_MIN) {
+          row.lateCount += 1
+          row.offenders.push({
+            atMs: act.firstMs,
+            label,
+            detail: `vào ca muộn ${Math.round(lateMin)}′`,
+          })
+        }
+      }
+    })
+  }
+
+  for (const row of Object.values(out)) {
+    row.paidHours = round1(row.paidHours)
+    row.paidLastHourHours = round1(row.paidLastHourHours)
+    row.offenders.sort((a, b) => a.atMs - b.atMs)
+  }
+  return out
+}

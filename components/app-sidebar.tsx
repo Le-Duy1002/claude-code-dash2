@@ -17,7 +17,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { LayoutDashboardIcon, ListIcon, ChartBarIcon, FolderIcon, FolderOpenIcon, UsersIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, FileChartColumnIcon, FileIcon, ClipboardListIcon, GaugeIcon, CalendarClockIcon, CalendarDaysIcon } from "lucide-react"
+import { LayoutDashboardIcon, ListIcon, ChartBarIcon, FolderIcon, FolderOpenIcon, UsersIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, FileChartColumnIcon, FileIcon, ClipboardListIcon, GaugeIcon, CalendarClockIcon, CalendarDaysIcon, BanknoteIcon } from "lucide-react"
 
 const data = {
   user: {
@@ -71,6 +71,14 @@ const data = {
       url: "/nhat-ky-ai",
       icon: (
         <CalendarClockIcon
+        />
+      ),
+    },
+    {
+      title: "Bảng lương",
+      url: "/bang-luong",
+      icon: (
+        <BanknoteIcon
         />
       ),
     },
