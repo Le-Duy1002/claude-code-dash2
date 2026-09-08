@@ -52,4 +52,4 @@
 3. Mốc biên của mỗi bậc thang được xử lý theo định nghĩa trong tham số (xem us.md Ghi chú 8–9).
 
 ## Notes and Issues
-- **[TBD-1]** Mốc 90 phút chia hai mức "bỏ ca 1–1,5 tiếng" và "bỏ ca ≥ 1,5 tiếng" là quy ước tạm ngày 08/09/2026 | Owner: Hoàng | Có thể chỉnh qua tham số
+- Mốc 90 phút chia hai mức "bỏ ca 1–1,5 tiếng" và "bỏ ca ≥ 1,5 tiếng" **tạm chốt** (08/09/2026), là một tham số chỉnh được.

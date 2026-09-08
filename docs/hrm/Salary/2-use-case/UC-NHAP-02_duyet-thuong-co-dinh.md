@@ -15,7 +15,7 @@
 **Description:** Thưởng cố định 500.000 đ chỉ dành cho nhân viên "đạt 100% tiêu chí" — quy ước là xếp loại tổng kỳ "Xuất sắc" — và cần quản lý xác nhận chứ không cộng tự động. Use case: hệ thống hiện thông báo gợi ý cho các nhân viên đủ điều kiện, quản lý duyệt hoặc bỏ qua. Kết thúc: khoản 500.000 đ được cộng cho những người quản lý đã duyệt.
 
 **Preconditions:**
-1. Quản lý đã đăng nhập.
+1. Tài khoản quản trị đã đăng nhập.
 2. Bảng lương của kỳ đang ở trạng thái "Nháp".
 3. Có ít nhất một nhân viên xếp loại "Xuất sắc" trong kỳ.
 

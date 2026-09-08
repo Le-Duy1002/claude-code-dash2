@@ -15,7 +15,7 @@
 **Description:** Cần một mốc "lương chính thức" để chi trả và để mọi thay đổi về sau đều truy vết được. Use case cho phép quản lý chốt bảng lương một kỳ sau khi đã rà xong: hệ thống khoá số liệu ở chế độ chỉ-đọc, lưu snapshot toàn bộ tham số đang dùng và ghi một dòng vào lịch sử. Kết thúc: bảng lương ở trạng thái "Đã chốt".
 
 **Preconditions:**
-1. Quản lý đã đăng nhập.
+1. Tài khoản quản trị đã đăng nhập.
 2. Bảng lương của kỳ đang ở trạng thái "Nháp".
 
 **Postconditions (thành công):**
@@ -48,8 +48,8 @@
 - —
 
 ## Assumptions
-1. Ai đăng nhập cũng có thể chốt (gác quyền phía client); danh tính người chốt được ghi vào lịch sử.
+1. Chỉ tài khoản quản trị được định danh (uid/email của Hoàng) mới chốt được — luật Firestore chặn tài khoản khác; danh tính người chốt được ghi vào lịch sử.
 2. Lịch sử chốt / điều chỉnh chỉ được đọc và thêm mới, không sửa / xoá qua web.
 
 ## Notes and Issues
-- **[TBD-1]** Có yêu cầu vai trò "quản lý" cứng phía máy chủ để được chốt lương không? | Owner: Hoàng | Chưa quyết
+- Phân quyền chốt lương **có kiểm soát phía máy chủ** (đã chốt 08/09/2026) — khác các tính năng khác của dashboard vốn gác quyền phía client.

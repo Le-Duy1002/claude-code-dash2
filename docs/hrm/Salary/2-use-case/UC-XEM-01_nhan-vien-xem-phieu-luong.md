@@ -39,11 +39,11 @@
 - —
 
 ## Special Requirements
-- Nhân viên chỉ đọc được phiếu của chính mình; đối chiếu tài khoản với danh sách nhân viên, gác quyền phía client.
+- Phân quyền có kiểm soát phía máy chủ: luật Firestore chỉ cho một tài khoản đọc dòng lương gắn với chính tài khoản đó; tài khoản quản trị được định danh đọc mọi dòng.
 
 ## Assumptions
 1. Ánh xạ tài khoản đăng nhập ↔ nhân viên sale đã có (theo email hoặc uid).
-2. Chưa có lớp phân quyền phía máy chủ.
+2. Danh sách tài khoản quản trị (hiện chỉ tài khoản của Hoàng) được cấu hình sẵn.
 
 ## Notes and Issues
 - —

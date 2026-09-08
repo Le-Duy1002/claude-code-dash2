@@ -6,7 +6,7 @@
 
 ## Bối cảnh
 
-Dashboard nội bộ Next.js + Firebase, giao diện tiếng Việt. Đội gồm **1 quản lý (Hoàng)** và **4 nhân viên sale (Duy, Hà, Quyến, Thương)**. Không có phân quyền phía máy chủ — mọi vai trò gác quyền phía client (quy ước).
+Dashboard nội bộ Next.js + Firebase, giao diện tiếng Việt. Đội gồm **1 quản lý (Hoàng)** và **4 nhân viên sale (Duy, Hà, Quyến, Thương)**. Các tính năng khác gác quyền phía client, nhưng **bảng lương có phân quyền kiểm soát phía máy chủ** (luật Firestore) vì liên quan tiền: chỉ tài khoản quản trị được định danh mới ghi và xem toàn bộ.
 
 Tính năng #4 — module `features/payroll` (mới). Bảng lương **không nhập tay xuyên bảng**: hệ thống gom số từ hai nguồn sẵn có rồi áp công thức A–E của bảng Excel cũ:
 
@@ -21,22 +21,18 @@ Chỉ **doanh thu chốt qua demo** và **số lần nộp báo cáo tháng tr�
 - **Giờ theo lịch** giữ đúng độ dài từng ca (Sáng 5h / Chiều 6h / Tối 5h), **không** quy tròn về 6h như sheet cũ.
 - **Thang thưởng demo:** mốc biên thuộc bậc dưới — phải vượt hẳn mốc mới lên bậc trên (đúng 20% vẫn là 10%, > 20% mới 18%).
 - **Thưởng cố định:** hệ thống hiện thông báo gợi ý khi nhân viên xếp loại "Xuất sắc" (điểm ≥ 90); **quản lý tự duyệt**, không tự cộng.
-- **Đến muộn** = vào ca trễ 10 phút → dưới 60 phút (< 10 phút: dung sai). **Bỏ ca** = vắng mặt trong ca ≥ 60 phút, chia hai mức tại **90 phút**.
+- **Đến muộn** = vào ca trễ 10 phút → dưới 60 phút (< 10 phút: dung sai). **Bỏ ca** = vắng mặt trong ca ≥ 60 phút, chia hai mức tại **90 phút** (tạm chốt, chỉnh qua tham số).
 - **Giờ vào / ra ca:** giờ vào = tin nhắn bot đầu tiên trong khung ca; giờ ra = hoạt động cuối gần cuối ca (cuối ca vắng khách tự nhiên vẫn tính đủ ca). Việc phát hiện này thuộc Lịch làm việc, ngoài phạm vi các use case ở đây.
-
-## Còn chờ quyết định
-
-- Mốc 90 phút chia hai mức "bỏ ca" là quy ước tạm — có thể chỉnh qua tham số (UC-KL-01 TBD-1).
-- Có cho dựng bảng lương khi tháng chưa kết thúc (xem trước giữa kỳ) không (UC-LUONG-01 TBD-1).
-- Có yêu cầu vai trò "quản lý" cứng phía máy chủ để chốt lương không (UC-CHOT-01 TBD-1).
-- Có lưu lịch sử các lần đổi tham số lương không (UC-CAUHINH-01 TBD-1).
+- **Dựng thử giữa kỳ:** có. Mỗi kỳ có sẵn "khung bảng lương"; quản lý dựng thử nhiều lần trong tháng (gần cuối tháng một lần, cuối tháng dựng bản cuối). Bản dựng thử đánh dấu "chưa đủ kỳ"; ngày/ca chưa diễn ra không tính vào giờ thiếu.
+- **Phân quyền (có kiểm soát phía máy chủ — khác các tính năng khác):** chỉ **tài khoản quản trị được định danh cụ thể** (uid/email của Hoàng) mới dựng / nhập / duyệt / chốt / điều chỉnh / cấu hình và xem phiếu của mọi nhân viên. Nhân viên chỉ đọc phiếu của chính mình. Luật Firestore chặn tài khoản khác.
+- **Lịch sử đổi tham số lương:** có — mỗi lần đổi ghi lại người sửa, thời điểm, giá trị cũ → mới; chỉ đọc.
 
 ## Actor
 
 | Actor | Vai trò |
 | :-- | :-- |
-| **Quản lý** (Hoàng) | Dựng bảng lương, nhập khoản thủ công, duyệt thưởng cố định, xem phiếu chi tiết, chốt & điều chỉnh, cấu hình tham số |
-| **Nhân viên sale** (Duy/Hà/Quyến/Thương) | Xem phiếu lương của chính mình sau khi đã chốt |
+| **Quản lý** (Hoàng) | Tài khoản quản trị được định danh cụ thể. Dựng / dựng thử bảng lương, nhập khoản thủ công, duyệt thưởng cố định, xem phiếu chi tiết của **mọi** nhân viên, chốt & điều chỉnh, cấu hình tham số |
+| **Nhân viên sale** (Duy/Hà/Quyến/Thương) | Chỉ xem phiếu lương của **chính mình** sau khi đã chốt |
 | **Hệ thống — tính khấu trừ** | Quy các chỉ số kỷ luật thành % trừ hệ số, cộng tổng, kẹp trần khi số liệu một dòng lương thay đổi |
 | **Lịch làm việc / Chấm điểm Pancake** *(nguồn dữ liệu)* | Cung cấp giờ công và các chỉ số chấm điểm cho kỳ |
 
@@ -66,7 +62,7 @@ Chỉ **doanh thu chốt qua demo** và **số lần nộp báo cáo tháng tr�
 
 ## Tóm tắt từng Use Case
 
-1. **UC-LUONG-01 Dựng bảng lương tháng** — Quản lý chọn kỳ → hệ thống tạo bảng lương nháp, mỗi nhân viên một dòng, tự điền giờ công từ Lịch và các chỉ số từ Chấm điểm, tính lương giờ (giờ cuối ca ×2), rồi chạy UC-KL-01. Kỳ chưa có lịch chốt → các mục giờ để "chờ". Dựng lại giữ nguyên khoản nhập tay. Bảng đã chốt không dựng lại được.
+1. **UC-LUONG-01 Dựng bảng lương tháng** — Quản lý chọn kỳ → hệ thống tạo bảng lương nháp, mỗi nhân viên một dòng, tự điền giờ công từ Lịch và các chỉ số từ Chấm điểm, tính lương giờ (giờ cuối ca ×2), rồi chạy UC-KL-01. Kỳ chưa có lịch chốt → các mục giờ để "chờ". Cho **dựng thử giữa kỳ** (đánh dấu "chưa đủ kỳ"). Dựng lại giữ nguyên khoản nhập tay. Bảng đã chốt không dựng lại được.
 2. **UC-KL-01 Áp thang khấu trừ kỷ luật** — Khi số liệu một dòng đổi, hệ thống quy tỷ lệ rep / tag (mục C, chỉ trừ hệ số) và các lỗi rời rạc (mục D, phạt tiền + trừ hệ số) thành % trừ, cộng tổng, kẹp trần 15%, ra hệ số ≥ 85% và tổng tiền phạt.
 3. **UC-NHAP-01 Nhập khoản thủ công** — Quản lý nhập doanh thu demo (→ tra thang thưởng, tính thưởng demo) và số lần nộp báo cáo trễ (→ tiền phạt + % trừ). Giá trị âm / phi số bị từ chối. Bảng đã chốt: ô chỉ-đọc.
 4. **UC-NHAP-02 Duyệt thưởng cố định** — Hệ thống gợi ý cộng 500.000 đ cho nhân viên xếp loại "Xuất sắc"; quản lý duyệt hoặc bỏ qua. Không "Xuất sắc" → không có gợi ý.
@@ -74,12 +70,12 @@ Chỉ **doanh thu chốt qua demo** và **số lần nộp báo cáo tháng tr�
 6. **UC-CHOT-01 Chốt bảng lương** — Quản lý bấm "Chốt lương", xác nhận → trạng thái "Đã chốt", số chỉ-đọc, lưu snapshot tham số, ghi lịch sử. Còn mục "chờ" → cảnh báo trước khi chốt.
 7. **UC-CHOT-02 Điều chỉnh sau khi chốt** — Quản lý mở chế độ điều chỉnh kèm lý do bắt buộc, sửa ô → tính lại qua UC-KL-01, mỗi thay đổi ghi "sau chốt" + lý do. Có nhánh "Bỏ chốt" đưa bảng về "Nháp".
 8. **UC-CHOT-03 Xem lịch sử điều chỉnh** — Quản lý xem danh sách thao tác chốt / điều chỉnh / bỏ chốt của kỳ, lọc theo nhân viên và "chỉ sau chốt". Không có dòng khớp → thông báo trống.
-9. **UC-CAUHINH-01 Cấu hình tham số lương** — Quản lý sửa đơn giá giờ (thường + giờ cuối ca), thang thưởng demo, thang trừ C/D, phạt tiền, trần/sàn. Bậc thang chồng lấn / hở hoặc giá trị phi lệ bị từ chối. Kỳ đã chốt giữ snapshot cũ.
+9. **UC-CAUHINH-01 Cấu hình tham số lương** — Quản lý sửa đơn giá giờ (thường + giờ cuối ca), thang thưởng demo, thang trừ C/D, phạt tiền, trần/sàn. Bậc thang chồng lấn / hở hoặc giá trị phi lệ bị từ chối. Mỗi lần lưu ghi một dòng lịch sử (ai, khi nào, cũ → mới). Kỳ đã chốt giữ snapshot cũ.
 10. **UC-XEM-01 Nhân viên xem phiếu lương** — Nhân viên chọn kỳ, xem phiếu của chính mình khi đã chốt. Kỳ chưa chốt → thông báo, không lộ số nháp. Không mở được phiếu người khác.
 
 ## Ngoài phạm vi (vòng sau)
 
-Xuất bảng lương ra tệp cho kế toán · gửi phiếu lương qua email · lịch sử lương nhiều tháng / biểu đồ xu hướng · tính lương cho nhân sự ngoài đội sale · tạm ứng và các khoản cộng / trừ đột xuất ngoài khung A–E · phân quyền phía máy chủ · phát hiện giờ vào/ra ca (thuộc Lịch làm việc).
+Xuất bảng lương ra tệp cho kế toán · gửi phiếu lương qua email · lịch sử lương nhiều tháng / biểu đồ xu hướng · tính lương cho nhân sự ngoài đội sale · tạm ứng và các khoản cộng / trừ đột xuất ngoài khung A–E · nhiều tài khoản quản trị / phân vai chi tiết (hiện chỉ một tài khoản quản trị) · phát hiện giờ vào/ra ca (thuộc Lịch làm việc).
 
 ## Bước 4 — Kết quả validate (checklist 20 điểm)
 

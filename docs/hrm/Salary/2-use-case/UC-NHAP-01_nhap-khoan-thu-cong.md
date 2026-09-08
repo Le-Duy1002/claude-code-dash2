@@ -15,7 +15,7 @@
 **Description:** Một số khoản không có nguồn tự động — doanh thu chốt qua xem demo và số lần nộp báo cáo tháng trễ. Use case cho phép quản lý nhập các khoản này cho từng nhân viên trên bảng lương nháp; hệ thống tính lại các ô dẫn xuất (% thưởng demo, thưởng demo, tiền phạt, % trừ mục D) và tổng lương. Kết thúc: dòng lương phản ánh đúng thưởng hiệu suất và phạt rời rạc.
 
 **Preconditions:**
-1. Quản lý đã đăng nhập.
+1. Tài khoản quản trị đã đăng nhập.
 2. Bảng lương của kỳ đang ở trạng thái "Nháp".
 
 **Postconditions (thành công):**

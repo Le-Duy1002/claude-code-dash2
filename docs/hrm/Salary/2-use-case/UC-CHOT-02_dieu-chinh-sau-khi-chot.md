@@ -15,7 +15,7 @@
 **Description:** Sau khi bảng lương đã chốt vẫn có thể phát hiện sai sót (ví dụ doanh thu demo vào sổ muộn). Use case cho phép quản lý mở lại bảng đã chốt để sửa, với lý do bắt buộc; mỗi thay đổi được ghi vào lịch sử với nhãn "sau chốt". Có nhánh "Bỏ chốt" đưa bảng về "Nháp". Kết thúc: số liệu được cập nhật, dấu vết đầy đủ.
 
 **Preconditions:**
-1. Quản lý đã đăng nhập.
+1. Tài khoản quản trị đã đăng nhập.
 2. Bảng lương của kỳ đang ở trạng thái "Đã chốt".
 
 **Postconditions (thành công):**

@@ -15,7 +15,7 @@
 **Description:** Khi nhân viên thắc mắc về lương, quản lý cần chỉ ra được từng con số ra từ đâu. Use case cho phép quản lý mở phiếu lương của một nhân viên và xem rõ năm mục A–E kèm mọi số trung gian, đồng thời bấm vào một chỉ số lỗi để xem danh sách ngày / hội thoại đứng sau con số đó. Kết thúc: quản lý nắm được cấu thành lương và phát hiện sớm số liệu bất thường. Use case chỉ đọc, không thay đổi dữ liệu.
 
 **Preconditions:**
-1. Quản lý đã đăng nhập.
+1. Tài khoản quản trị đã đăng nhập.
 2. Bảng lương của kỳ đã được dựng (trạng thái "Nháp" hoặc "Đã chốt").
 
 **Postconditions (thành công):**

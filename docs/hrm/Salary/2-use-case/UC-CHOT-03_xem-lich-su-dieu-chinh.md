@@ -15,7 +15,7 @@
 **Description:** Khi có tranh luận về một con số lương, quản lý cần biết ai đã đổi gì, khi nào và vì sao. Use case cho phép quản lý xem toàn bộ thao tác chốt / điều chỉnh / bỏ chốt của một kỳ, lọc theo nhân viên và theo "chỉ sau khi chốt". Use case chỉ đọc.
 
 **Preconditions:**
-1. Quản lý đã đăng nhập.
+1. Tài khoản quản trị đã đăng nhập.
 2. Bảng lương của kỳ đã tồn tại.
 
 **Postconditions (thành công):**
@@ -44,4 +44,4 @@
 1. Lịch sử dùng chung cơ chế `workScheduleChanges` của Lịch làm việc (chỉ đọc và thêm mới).
 
 ## Notes and Issues
-- **[TBD-1]** Chưa có user story riêng cho phần xem lịch sử; suy ra từ US-CHOT-01 và Ghi chú 13 của us.md | Owner: Hoàng
+- Truy vết: use case này suy ra từ US-CHOT-01 và Ghi chú 13 của us.md (chưa có user story riêng cho phần xem lịch sử — cân nhắc bổ sung khi vào Sprint Planning).

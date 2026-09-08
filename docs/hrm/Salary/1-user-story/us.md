@@ -10,8 +10,8 @@
 
 | Persona | Mô tả |
 | :-- | :-- |
-| **Quản lý** | Hoàng — chạy bảng lương tháng, nhập các khoản thủ công, chốt lương, cấu hình tham số |
-| **Nhân viên sale** | Duy / Hà / Quyến / Thương — xem phiếu lương của chính mình sau khi đã chốt |
+| **Quản lý** | Hoàng — **tài khoản quản trị được định danh cụ thể**; dựng / dựng thử bảng lương, nhập khoản thủ công, duyệt thưởng, chốt & điều chỉnh, cấu hình tham số, và xem rõ phiếu lương của **mọi** nhân viên |
+| **Nhân viên sale** | Duy / Hà / Quyến / Thương — chỉ xem phiếu lương của **chính mình** sau khi đã chốt |
 
 ## Nguồn dữ liệu
 
@@ -90,7 +90,13 @@
 - **When** việc đọc dữ liệu chấm điểm hoặc lịch thất bại
 - **Then** hệ thống không tạo bảng lương nửa vời, giữ nguyên trạng thái trước đó và báo để thử lại
 
+**AC-5: Dựng thử giữa kỳ khi tháng chưa kết thúc (luồng thường)**
+- **Given** hôm nay là 27/8/2026, tháng 8 chưa kết thúc, đã có khung bảng lương tháng 8 sẵn sàng dựng
+- **When** quản lý bấm "Dựng thử" cho tháng 8/2026
+- **Then** hệ thống dựng bảng nháp với số liệu tính đến thời điểm hiện tại, đánh dấu là "dựng thử — chưa đủ kỳ", các ngày/ca chưa diễn ra không tính vào giờ thiếu; quản lý dựng lại nhiều lần và dựng bản cuối khi tháng kết thúc
+
 ### Ghi chú
+- "Khung bảng lương" của mỗi kỳ được tạo sẵn (danh sách nhân viên + các ô trống) để quản lý dựng thử bất kỳ lúc nào trong tháng; mỗi lần "Dựng thử" / "Dựng lại" ghi đè số tự động, giữ khoản nhập tay.
 - Mục D kéo tự động: "Bỏ sót inbox" từ tiêu chí 5; "Đến muộn", "Bỏ ca 1–1,5 tiếng", "Bỏ ca ≥ 1,5 tiếng" từ đối chiếu giờ vào/ra ca (quét Pancake) với khung ca đăng ký. Chỉ "Nộp báo cáo tháng trễ hạn" nhập tay (US-NHAP-01).
 - Lương giờ mục A: mỗi ca, giờ thực tế thuộc giờ cuối ca (Sáng 12–13h, Chiều 18–19h, Tối 23–24h) tính đơn giá gấp đôi (50.000 đ), các giờ còn lại tính 25.000 đ.
 
@@ -304,6 +310,11 @@
 - **When** quản lý nhập đơn giá giờ âm, hệ số sàn lớn hơn 100% hoặc trần % trừ âm
 - **Then** hệ thống không lưu và báo giá trị không hợp lệ
 
+**AC-5: Ghi lịch sử mỗi lần đổi tham số (luồng thường)**
+- **Given** đơn giá giờ thường đang là 25.000 đ
+- **When** quản lý đổi thành 27.000 đ và lưu
+- **Then** hệ thống lưu một bản ghi lịch sử: người sửa, thời điểm, tham số nào, giá trị cũ → giá trị mới; danh sách lịch sử này xem được, chỉ đọc
+
 ---
 
 ## US-XEM-01 — Nhân viên xem phiếu lương của mình
@@ -377,7 +388,7 @@
    | Bỏ ca 1 – 1,5 tiếng | tổng vắng mặt trong ca từ **60 đến dưới 90 phút** | 300.000 | 3% | 6% | 10% | tự động (quét Pancake) |
    | Bỏ ca ≥ 1,5 tiếng | tổng vắng mặt trong ca **từ 90 phút trở lên** (gồm ca bỏ hẳn) | 500.000 | 7% | 12% | 15% | tự động (quét Pancake) |
 
-   *Mốc 90 phút giữa hai mức "bỏ ca" là quy ước từ trao đổi ngày 08/09/2026, có thể chỉnh qua tham số.*
+   *Mốc 90 phút giữa hai mức "bỏ ca" **tạm chốt** (08/09/2026), có thể chỉnh qua tham số.*
 10. **Chặn trần khấu trừ:** tổng % trừ hệ số của mục C + D tối đa **15%**; hệ số lương còn lại tối thiểu **85%**. Cả hai là tham số.
 11. **Công thức mục E:**
     - Tổng trước khấu trừ = Lương giờ + Thưởng demo + Thưởng cố định.
@@ -385,6 +396,7 @@
     - Lương sau hệ số = Tổng trước khấu trừ × Hệ số còn lại.
     - **Tổng lương thực lĩnh = Lương sau hệ số − Tổng tiền phạt (mục D).**
 12. **Snapshot tham số:** khi chốt, bảng lương lưu lại toàn bộ tham số đang dùng để về sau đổi chính sách không làm lệch số đã chốt.
-13. **Lịch sử chốt / điều chỉnh** chỉ được đọc và thêm mới, không sửa / xoá qua web — theo mẫu `workScheduleChanges` của Lịch làm việc.
-14. **Phân quyền:** gác quyền phía client như các tính năng khác. Quản lý dựng / nhập / chốt; nhân viên chỉ xem phiếu của chính mình (đối chiếu theo tài khoản đăng nhập với danh sách nhân viên sale). Chưa có lớp phân quyền máy chủ cho vai trò "quản lý".
-15. **Chưa bao gồm (vòng sau):** xuất bảng lương ra tệp để bàn giao kế toán, gửi phiếu lương qua email, lịch sử lương nhiều tháng / biểu đồ xu hướng, tính lương cho nhân sự ngoài đội sale, tạm ứng và các khoản cộng / trừ đột xuất ngoài khung A–E.
+13. **Lịch sử chốt / điều chỉnh** và **lịch sử đổi tham số lương** chỉ được đọc và thêm mới, không sửa / xoá qua web — theo mẫu `workScheduleChanges` của Lịch làm việc.
+14. **Phân quyền (khác các tính năng khác — có kiểm soát phía máy chủ):** chỉ **tài khoản quản trị được định danh cụ thể** (uid/email của Hoàng, để trong danh sách quản trị) mới được dựng / nhập / duyệt / chốt / điều chỉnh / cấu hình và xem phiếu của mọi nhân viên. Nhân viên chỉ đọc phiếu của chính mình. Luật Firestore chặn tài khoản ngoài danh sách quản trị ghi vào dữ liệu bảng lương và đọc phiếu người khác.
+15. **Dựng thử giữa kỳ:** mỗi kỳ có sẵn "khung bảng lương" để quản lý dựng thử bất kỳ lúc nào trong tháng (gần cuối tháng dựng thử, cuối tháng dựng bản cuối). Bản dựng thử đánh dấu "chưa đủ kỳ"; ngày/ca chưa diễn ra không tính vào giờ thiếu.
+16. **Chưa bao gồm (vòng sau):** xuất bảng lương ra tệp để bàn giao kế toán, gửi phiếu lương qua email, lịch sử lương nhiều tháng / biểu đồ xu hướng, tính lương cho nhân sự ngoài đội sale, tạm ứng và các khoản cộng / trừ đột xuất ngoài khung A–E.
