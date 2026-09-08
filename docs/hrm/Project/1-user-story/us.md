@@ -382,7 +382,8 @@
 **AC-3: Xoá bình luận gốc còn phản hồi (luồng biên)**
 - **Given** bình luận của quản lý đã có 2 phản hồi
 - **When** quản lý xoá bình luận gốc đó
-- **Then** hệ thống vẫn giữ hiển thị 2 phản hồi và đánh dấu bình luận gốc đã bị xoá
+- **Then** hệ thống xoá luôn cả bình luận gốc lẫn 2 phản hồi bên trong trong một thao tác nguyên tử (đồng bộ với bình luận phân luồng của `features/tasks`)
+- **And** chỉ người tạo bình luận mới thấy được nút xoá bình luận đó
 
 **AC-4: Gửi bình luận khi mất mạng (luồng lỗi)**
 - **Given** nhân viên vừa soạn phản hồi trên công việc X

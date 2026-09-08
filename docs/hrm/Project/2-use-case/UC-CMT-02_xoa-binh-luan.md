@@ -4,48 +4,62 @@
 | :-- | :-- |
 | **Use Case ID** | UC-CMT-02 |
 | **Use Case Name** | Xoá bình luận trên công việc |
-| **Created By** | BA · **Cập nhật bởi:** — |
-| **Ngày tạo** | 07/09/2026 · **Cập nhật:** — |
-| **Primary Actor** | Thành viên dự án (người viết bình luận đó, hoặc quản lý) |
+| **Created By** | BA · **Cập nhật bởi:** BA |
+| **Ngày tạo** | 07/09/2026 · **Cập nhật:** 08/09/2026 |
+| **Primary Actor** | Thành viên dự án — người đã viết bình luận đó |
 | **Secondary Actor** | — |
 | **Priority** | Low |
 | **Frequency of Use** | Hiếm — vài lần / tháng |
 | **Nguồn** | US-CMT-01 (AC-3) |
 
-**Description:** Người viết cần gỡ bình luận sai hoặc thừa mà không làm mất mạch trao đổi của người khác. Use case xoá một bình luận; nếu bình luận đó còn phản hồi bên dưới thì các phản hồi được giữ lại và bình luận gốc hiển thị dạng "đã xoá". Kết thúc: bình luận không còn nội dung nhưng luồng phản hồi được bảo toàn.
+**Description:** Người viết cần gỡ một bình luận sai hoặc thừa. Use case xoá bình
+luận đó; nếu bình luận còn phản hồi bên dưới thì **cả nhánh** (bình luận gốc và
+mọi phản hồi con) bị xoá cùng lúc trong một thao tác nguyên tử — đồng bộ với hành
+vi bình luận phân luồng của `features/tasks`. Kết thúc: nhánh bình luận không còn
+trong luồng của công việc.
 
 **Preconditions:**
 1. Thành viên đã đăng nhập.
-2. Bình luận đích tồn tại và do chính thành viên đó viết, hoặc thành viên là quản lý.
+2. Bình luận đích tồn tại và do chính thành viên đó viết.
 
 **Postconditions (thành công):**
-1. Nếu bình luận không có phản hồi: bản ghi bị xoá hoàn toàn khỏi luồng.
-2. Nếu bình luận có phản hồi: nội dung bị gỡ, bình luận hiển thị "đã xoá", mọi phản hồi con vẫn hiển thị đúng vị trí.
+1. Bản ghi bình luận đích bị xoá hoàn toàn khỏi luồng.
+2. Nếu bình luận có phản hồi con: mọi phản hồi con (mọi cấp) cũng bị xoá trong
+   cùng một batch ghi.
+3. Luồng bình luận của công việc cập nhật cho mọi người xem trong vài giây.
 
 ## Normal Course of Events
 1. Thành viên chọn "xoá" trên bình luận của mình.
-2. Hệ thống hỏi xác nhận xoá.
+2. Hệ thống hỏi xác nhận, nêu rõ mọi phản hồi bên trong cũng sẽ bị xoá.
 3. Thành viên xác nhận.
-4. Hệ thống kiểm tra bình luận có phản hồi con hay không.
-5. Nếu không có phản hồi con, hệ thống xoá bản ghi bình luận.
+4. Hệ thống thu thập id của bình luận đích và toàn bộ phản hồi con từ cây bình
+   luận đang hiển thị.
+5. Hệ thống xoá tất cả các bản ghi đó trong một `writeBatch` nguyên tử.
 6. Hệ thống cập nhật luồng bình luận của công việc.
 
 ## Alternative Courses
-- **UC-CMT-02.AC.1** — Tại bước 4, nếu bình luận có phản hồi con, tại bước 5 hệ thống gỡ nội dung và đánh dấu bình luận "đã xoá" thay vì xoá bản ghi, giữ nguyên các phản hồi con.
+- —
 
 ## Exceptions
-- **UC-CMT-02.EX.1 — Không có quyền:** Tại bước 1, nếu bình luận không do thành viên viết và thành viên không phải quản lý → hệ thống không hiển thị chức năng xoá. Trạng thái cuối: bình luận không đổi.
-- **UC-CMT-02.EX.2 — Lỗi xoá:** Tại bước 5, nếu ghi thất bại → hệ thống giữ nguyên bình luận và thông báo để thử lại. Trạng thái cuối: bình luận không đổi.
+- **UC-CMT-02.EX.1 — Không có quyền:** Tại bước 1, nếu bình luận không do thành
+  viên đang đăng nhập viết → hệ thống không hiển thị nút xoá cho bình luận đó.
+  Trạng thái cuối: bình luận không đổi.
+- **UC-CMT-02.EX.2 — Lỗi xoá:** Tại bước 5, nếu batch ghi thất bại → hệ thống
+  giữ nguyên toàn bộ nhánh bình luận và thông báo để thử lại. Trạng thái cuối:
+  bình luận không đổi.
 
 ## Includes
 - —
 
 ## Special Requirements
-- —
+- Xoá nhánh phải nguyên tử: hoặc xoá hết, hoặc không xoá gì.
 
 ## Assumptions
-1. "Quyền xoá" là quy ước phía client, không ép buộc phía máy chủ.
+1. "Quyền xoá" là quy ước phía client cộng với luật Firestore
+   `resource.data.createdByUid == request.auth.uid` — chỉ người viết xoá được.
 2. Không có chức năng khôi phục bình luận đã xoá.
+3. Không giữ "bia mộ" (đánh dấu đã xoá) — nhánh biến mất hẳn khỏi luồng.
 
 ## Notes and Issues
-- —
+- Trước đây bản nháp mô tả xoá mềm (giữ phản hồi, đánh dấu bình luận gốc "đã
+  xoá"). Đã đổi sang xoá cả nhánh để đồng bộ với `features/tasks` được tái dùng.

@@ -44,7 +44,7 @@ Dashboard nội bộ Next.js + Firebase, giao diện tiếng Việt. Đội gồ
 | [UC-DOC-04](UC-DOC-04_quet-doi-chieu-tai-lieu-du-phong.md) | Quét đối chiếu tài liệu dự phòng | Hệ thống *(định kỳ)* | Medium | US-DOC-02 AC-5 |
 | [UC-DOC-05](UC-DOC-05_khoi-tao-thu-muc-tai-lieu-du-an.md) | Khởi tạo thư mục tài liệu cho dự án | Quản lý dự án | Medium | US-PRJ-01 AC-4 |
 | [UC-CMT-01](UC-CMT-01_dang-binh-luan-hoac-phan-hoi.md) | Đăng bình luận hoặc phản hồi trên công việc | Thành viên dự án | Medium | US-CMT-01 |
-| [UC-CMT-02](UC-CMT-02_xoa-binh-luan.md) | Xoá bình luận trên công việc | Thành viên dự án | Low | US-CMT-01 AC-3 |
+| [UC-CMT-02](UC-CMT-02_xoa-binh-luan.md) | Xoá bình luận trên công việc | Người viết bình luận | Low | US-CMT-01 AC-3 |
 
 ## Quan hệ giữa Use Case
 
@@ -66,7 +66,7 @@ Dashboard nội bộ Next.js + Firebase, giao diện tiếng Việt. Đội gồ
 9. **UC-DOC-04 Quét đối chiếu dự phòng** — Tác vụ định kỳ thưa (mỗi giờ) quét mọi thư mục dự án và đồng bộ lại danh sách web cho khớp Drive, bù cho các thông báo webhook bị mất. Quá thời gian chạy → làm dở đến đâu lưu đến đó, tiếp tục lần sau.
 10. **UC-DOC-05 Khởi tạo thư mục tài liệu** — Tạo thư mục con trong thư mục gốc ứng dụng (phạm vi `drive.file`), liên kết id với dự án, đăng ký kênh theo dõi. Gọi bởi UC-PRJ-01 hoặc chạy độc lập khi tạo lại. **Xoá dự án không xoá thư mục này.**
 11. **UC-CMT-01 Đăng bình luận / phản hồi** — Thành viên viết bình luận trên công việc, hoặc phản hồi lồng dưới một bình luận có sẵn; kèm tên người + thời điểm. Chặn: nội dung rỗng.
-12. **UC-CMT-02 Xoá bình luận** — Người viết (hoặc quản lý) xoá bình luận của mình. Nếu còn phản hồi con → gỡ nội dung, đánh dấu "đã xoá", giữ các phản hồi. Không phải người viết / không phải quản lý → không thấy nút xoá.
+12. **UC-CMT-02 Xoá bình luận** — Người viết xoá bình luận của mình. Nếu còn phản hồi con → xoá cả nhánh (bình luận gốc + mọi phản hồi) trong một batch nguyên tử, đồng bộ với `features/tasks`. Không phải người viết → không thấy nút xoá.
 
 ## Ngoài phạm vi (vòng sau)
 
