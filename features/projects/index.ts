@@ -6,6 +6,7 @@ export {
   EditProjectTaskDialog,
 } from "./components/project-task-dialogs"
 export { ProjectTaskTable } from "./components/project-task-table"
+export { ProjectKanban } from "./components/project-kanban"
 export {
   createProject,
   subscribeToProject,

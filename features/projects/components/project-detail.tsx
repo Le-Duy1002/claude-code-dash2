@@ -7,6 +7,8 @@ import {
   ArrowLeftIcon,
   ExternalLinkIcon,
   FolderSyncIcon,
+  LayoutGridIcon,
+  TableIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -46,6 +48,7 @@ import {
   type ProjectTask,
 } from "../types"
 import { ProjectDocuments } from "./project-documents"
+import { ProjectKanban } from "./project-kanban"
 import {
   AddProjectTaskDialog,
   EditProjectTaskDialog,
@@ -110,6 +113,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const [editTask, setEditTask] = React.useState<ProjectTask | null>(null)
   const [editOpen, setEditOpen] = React.useState(false)
   const [folderBusy, setFolderBusy] = React.useState(false)
+  const [view, setView] = React.useState<"table" | "kanban">("table")
 
   async function createFolder() {
     setFolderBusy(true)
@@ -284,17 +288,43 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 <DateRangePicker value={range} onChange={setRange} />
               ) : null}
             </div>
-            <AddProjectTaskDialog
-              projectId={projectId}
-              projectEndDate={project.endDate}
-            />
+            <div className="flex items-center gap-1.5">
+              <div className="flex rounded-md border p-0.5">
+                <Button
+                  size="sm"
+                  variant={view === "table" ? "secondary" : "ghost"}
+                  className="h-7"
+                  onClick={() => setView("table")}
+                >
+                  <TableIcon data-icon="inline-start" />
+                  Bảng
+                </Button>
+                <Button
+                  size="sm"
+                  variant={view === "kanban" ? "secondary" : "ghost"}
+                  className="h-7"
+                  onClick={() => setView("kanban")}
+                >
+                  <LayoutGridIcon data-icon="inline-start" />
+                  Kanban
+                </Button>
+              </div>
+              <AddProjectTaskDialog
+                projectId={projectId}
+                projectEndDate={project.endDate}
+              />
+            </div>
           </div>
 
-          <ProjectTaskTable
-            tasks={visible}
-            loading={loading}
-            onEdit={handleEdit}
-          />
+          {view === "table" ? (
+            <ProjectTaskTable
+              tasks={visible}
+              loading={loading}
+              onEdit={handleEdit}
+            />
+          ) : (
+            <ProjectKanban tasks={visible} onEdit={handleEdit} />
+          )}
 
           <p className="text-xs text-muted-foreground">
             {visible.length}/{tasks.length} công việc
@@ -304,6 +334,9 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               ).length
               return late > 0 ? ` · ${late} việc quá hạn` : ""
             })()}
+            {view === "kanban"
+              ? " · kéo thẻ sang cột khác để đổi trạng thái"
+              : ""}
           </p>
 
           <ProjectDocuments
