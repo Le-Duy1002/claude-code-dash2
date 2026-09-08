@@ -70,6 +70,12 @@ service cloud.firestore {
       }
     }
 
+    // Tài liệu của dự án — bản sao thư mục Drive, chỉ Admin SDK ghi.
+    match /projects/{projectId}/documents/{fileId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
     // ---------------------------------------------------------- Admin SDK ghi
 
     // Thư viện tài liệu — bản sao thư mục Google Drive do máy chủ đồng bộ.

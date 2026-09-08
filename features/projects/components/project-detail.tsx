@@ -45,6 +45,7 @@ import {
   type Project,
   type ProjectTask,
 } from "../types"
+import { ProjectDocuments } from "./project-documents"
 import {
   AddProjectTaskDialog,
   EditProjectTaskDialog,
@@ -304,6 +305,11 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               return late > 0 ? ` · ${late} việc quá hạn` : ""
             })()}
           </p>
+
+          <ProjectDocuments
+            projectId={projectId}
+            driveFolderUrl={project.driveFolderUrl}
+          />
 
           <EditProjectTaskDialog
             task={editTask}

@@ -14,6 +14,14 @@ export {
 } from "./services/projects-service"
 export { ensureProjectFolder } from "./services/project-folder-service"
 export {
+  deleteProjectDocument,
+  renameProjectDocument,
+  subscribeToProjectDocuments,
+  syncProjectDocuments,
+  uploadProjectDocument,
+} from "./services/project-documents-service"
+export { ProjectDocuments } from "./components/project-documents"
+export {
   createProjectTask,
   deleteProjectTask,
   setProjectTaskStatus,
