@@ -5,11 +5,14 @@ import Link from "next/link"
 import {
   AlertTriangleIcon,
   ArrowLeftIcon,
+  ExternalLinkIcon,
   FolderSyncIcon,
 } from "lucide-react"
+import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth-provider"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Select,
   SelectContent,
@@ -26,6 +29,7 @@ import {
 } from "@/features/pancake/components/date-range-picker"
 import { resolveReportRange } from "@/features/pancake/types"
 
+import { ensureProjectFolder } from "../services/project-folder-service"
 import { subscribeToProject } from "../services/projects-service"
 import { subscribeToProjectTasks } from "../services/project-tasks-service"
 import {
@@ -104,6 +108,19 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
 
   const [editTask, setEditTask] = React.useState<ProjectTask | null>(null)
   const [editOpen, setEditOpen] = React.useState(false)
+  const [folderBusy, setFolderBusy] = React.useState(false)
+
+  async function createFolder() {
+    setFolderBusy(true)
+    try {
+      await ensureProjectFolder(projectId)
+      toast.success("Đã tạo thư mục tài liệu Drive.")
+    } catch (e) {
+      toast.error(`Không tạo được thư mục: ${(e as Error).message}`)
+    } finally {
+      setFolderBusy(false)
+    }
+  }
 
   React.useEffect(() => {
     if (!user) return
@@ -204,12 +221,32 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 ? `${progress.done}/${progress.total} công việc hoàn thành`
                 : "chưa có công việc"}
             </p>
-            {project.driveFolderPending ? (
-              <p className="inline-flex w-fit items-center gap-1.5 rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-400">
+            {project.driveFolderId ? (
+              <a
+                href={project.driveFolderUrl ?? undefined}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+              >
                 <FolderSyncIcon className="size-3.5" />
-                Thư mục tài liệu Drive chưa được tạo (sẽ bổ sung ở đợt tài liệu).
-              </p>
-            ) : null}
+                Thư mục tài liệu trên Drive
+                <ExternalLinkIcon className="size-3" />
+              </a>
+            ) : (
+              <div className="inline-flex w-fit items-center gap-2 rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-400">
+                <FolderSyncIcon className="size-3.5" />
+                Chưa có thư mục tài liệu Drive.
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6"
+                  disabled={folderBusy}
+                  onClick={createFolder}
+                >
+                  {folderBusy ? "Đang tạo…" : "Tạo thư mục ngay"}
+                </Button>
+              </div>
+            )}
           </div>
 
           {/* toolbar */}

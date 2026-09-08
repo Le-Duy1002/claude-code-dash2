@@ -12,6 +12,7 @@ export {
   subscribeToProjects,
   updateProject,
 } from "./services/projects-service"
+export { ensureProjectFolder } from "./services/project-folder-service"
 export {
   createProjectTask,
   deleteProjectTask,

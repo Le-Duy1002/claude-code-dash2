@@ -15,6 +15,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 
+import { ensureProjectFolder } from "../services/project-folder-service"
 import { createProject } from "../services/projects-service"
 import type { Project } from "../types"
 import { ProjectForm } from "./project-form"
@@ -50,6 +51,9 @@ export function CreateProjectDialog({
             toast.success("Đã tạo dự án.")
             setOpen(false)
             onCreated?.(id)
+            // tạo thư mục Drive ở nền — nút "Tạo thư mục" trên trang dự án
+            // là phương án dự phòng nếu bước này lỗi
+            ensureProjectFolder(id).catch(() => {})
           }}
         />
       </DialogContent>

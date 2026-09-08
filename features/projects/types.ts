@@ -74,6 +74,8 @@ export interface Project {
   status: ProjectStatus
   /** id thư mục Drive của dự án; null khi chưa tạo được */
   driveFolderId: string | null
+  /** link mở thư mục Drive của dự án */
+  driveFolderUrl: string | null
   driveFolderPending: boolean
   createdByUid: string
   createdAt: number

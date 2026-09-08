@@ -72,6 +72,107 @@ function writeClient() {
   return google.drive({ version: "v3", auth })
 }
 
+/**
+ * Write client for the "Dự án" area — a second OAuth identity that owns the
+ * projects parent folder (`GOOGLE_OAUTH_PROJECTS_*`, falls back to
+ * `GOOGLE_OAUTH_*`). `drive.file` only writes into folders THIS identity
+ * created, hence a dedicated parent folder created via
+ * `scripts/create-projects-folder.mjs`.
+ */
+function projectsWriteClient() {
+  const clientId =
+    process.env.GOOGLE_OAUTH_PROJECTS_CLIENT_ID ??
+    process.env.GOOGLE_OAUTH_CLIENT_ID
+  const clientSecret =
+    process.env.GOOGLE_OAUTH_PROJECTS_CLIENT_SECRET ??
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET
+  const refreshToken =
+    process.env.GOOGLE_OAUTH_PROJECTS_REFRESH_TOKEN ??
+    process.env.GOOGLE_OAUTH_REFRESH_TOKEN
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error(
+      "Missing GOOGLE_OAUTH_PROJECTS_CLIENT_ID / _CLIENT_SECRET / _REFRESH_TOKEN"
+    )
+  }
+  const auth = new google.auth.OAuth2(clientId, clientSecret)
+  auth.setCredentials({
+    refresh_token: refreshToken,
+    scope: WRITE_SCOPES.join(" "),
+  })
+  return google.drive({ version: "v3", auth })
+}
+
+export const PROJECTS_PARENT_FOLDER_ID =
+  process.env.GOOGLE_DRIVE_PROJECTS_FOLDER_ID ?? ""
+
+/** Creates a subfolder for one project inside the "Dự án" parent folder. */
+export async function createProjectFolder(
+  name: string
+): Promise<{ id: string; webViewLink: string }> {
+  if (!PROJECTS_PARENT_FOLDER_ID) {
+    throw new Error("GOOGLE_DRIVE_PROJECTS_FOLDER_ID chưa cấu hình")
+  }
+  const drive = projectsWriteClient()
+  const res = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [PROJECTS_PARENT_FOLDER_ID],
+    },
+    fields: "id, webViewLink",
+  })
+  return {
+    id: res.data.id ?? "",
+    webViewLink: res.data.webViewLink ?? "",
+  }
+}
+
+/** Renames a project folder (e.g. when the project is renamed). */
+export async function renameProjectFolder(
+  folderId: string,
+  name: string
+): Promise<void> {
+  const drive = projectsWriteClient()
+  await drive.files.update({ fileId: folderId, requestBody: { name } })
+}
+
+/** Uploads a file into a project folder, owned by the projects OAuth account. */
+export async function uploadFileToProjectFolder(params: {
+  folderId: string
+  name: string
+  mimeType: string
+  buffer: Buffer
+}): Promise<DriveFile> {
+  const drive = projectsWriteClient()
+  const response = await drive.files.create({
+    requestBody: { name: params.name, parents: [params.folderId] },
+    media: { mimeType: params.mimeType, body: Readable.from(params.buffer) },
+    fields: DRIVE_FIELDS,
+  })
+  return mapFile(response.data)
+}
+
+/** Renames a file in a project folder. */
+export async function renameProjectFile(
+  fileId: string,
+  name: string
+): Promise<DriveFile> {
+  const drive = projectsWriteClient()
+  const response = await drive.files.update({
+    fileId,
+    requestBody: { name },
+    fields: DRIVE_FIELDS,
+  })
+  return mapFile(response.data)
+}
+
+/** Deletes a file in a project folder. */
+export async function deleteProjectFile(fileId: string): Promise<void> {
+  const drive = projectsWriteClient()
+  await drive.files.delete({ fileId })
+}
+
 function mapFile(file: {
   id?: string | null
   name?: string | null

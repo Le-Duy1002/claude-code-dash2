@@ -37,6 +37,7 @@ function mapProject(id: string, data: Record<string, unknown>): Project {
       : [],
     status: (data.status as ProjectStatus) ?? "active",
     driveFolderId: (data.driveFolderId as string) ?? null,
+    driveFolderUrl: (data.driveFolderUrl as string) ?? null,
     driveFolderPending: Boolean(data.driveFolderPending),
     createdByUid: (data.createdByUid as string) ?? "",
     createdAt: toMillis(data.createdAt),
