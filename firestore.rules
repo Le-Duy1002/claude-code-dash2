@@ -86,7 +86,10 @@ service cloud.firestore {
     // Chỉ tài khoản quản trị được định danh đọc; mọi ghi qua Admin SDK.
     function isPayrollAdmin() {
       return request.auth != null
-        && request.auth.token.email in ['hoangthang0m@gmail.com'];
+        && request.auth.token.email in [
+          'hoangthang0m@gmail.com',
+          'nangluongvutru999@gmail.com'
+        ];
     }
 
     match /payrollPeriods/{periodId} {
