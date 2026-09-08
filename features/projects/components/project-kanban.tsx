@@ -14,7 +14,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core"
 import { CSS } from "@dnd-kit/utilities"
-import { PencilIcon } from "lucide-react"
+import { MessageSquareIcon, PencilIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
@@ -43,10 +43,12 @@ const TONE_CLASS = {
 function Card({
   task,
   onEdit,
+  onOpenComments,
   overlay = false,
 }: {
   task: ProjectTask
   onEdit?: (task: ProjectTask) => void
+  onOpenComments?: (task: ProjectTask) => void
   overlay?: boolean
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
@@ -71,15 +73,29 @@ function Card({
     >
       <div className="flex items-start justify-between gap-1">
         <p className="font-medium">{task.title}</p>
-        {onEdit ? (
-          <button
-            type="button"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => onEdit(task)}
-            className="shrink-0 text-muted-foreground hover:text-foreground"
-          >
-            <PencilIcon className="size-3.5" />
-          </button>
+        {!overlay ? (
+          <div className="flex shrink-0 gap-0.5">
+            {onOpenComments ? (
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => onOpenComments(task)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <MessageSquareIcon className="size-3.5" />
+              </button>
+            ) : null}
+            {onEdit ? (
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => onEdit(task)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <PencilIcon className="size-3.5" />
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
@@ -101,10 +117,12 @@ function Column({
   status,
   tasks,
   onEdit,
+  onOpenComments,
 }: {
   status: TaskStatus
   tasks: ProjectTask[]
   onEdit: (task: ProjectTask) => void
+  onOpenComments: (task: ProjectTask) => void
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status })
   return (
@@ -120,7 +138,12 @@ function Column({
       </p>
       <div className="flex flex-col gap-2">
         {tasks.map((task) => (
-          <Card key={task.id} task={task} onEdit={onEdit} />
+          <Card
+            key={task.id}
+            task={task}
+            onEdit={onEdit}
+            onOpenComments={onOpenComments}
+          />
         ))}
         {tasks.length === 0 ? (
           <p className="px-1 py-4 text-center text-xs text-muted-foreground">
@@ -135,9 +158,11 @@ function Column({
 export function ProjectKanban({
   tasks,
   onEdit,
+  onOpenComments,
 }: {
   tasks: ProjectTask[]
   onEdit: (task: ProjectTask) => void
+  onOpenComments: (task: ProjectTask) => void
 }) {
   const [pending, setPending] = React.useState<Record<string, TaskStatus>>({})
   const [dragId, setDragId] = React.useState<string | null>(null)
@@ -214,6 +239,7 @@ export function ProjectKanban({
             status={status}
             tasks={byColumn[status]}
             onEdit={onEdit}
+            onOpenComments={onOpenComments}
           />
         ))}
       </div>

@@ -49,6 +49,7 @@ import {
 } from "../types"
 import { ProjectDocuments } from "./project-documents"
 import { ProjectKanban } from "./project-kanban"
+import { ProjectTaskCommentsDialog } from "./project-task-comments"
 import {
   AddProjectTaskDialog,
   EditProjectTaskDialog,
@@ -112,6 +113,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
 
   const [editTask, setEditTask] = React.useState<ProjectTask | null>(null)
   const [editOpen, setEditOpen] = React.useState(false)
+  const [commentsTask, setCommentsTask] = React.useState<ProjectTask | null>(null)
+  const [commentsOpen, setCommentsOpen] = React.useState(false)
   const [folderBusy, setFolderBusy] = React.useState(false)
   const [view, setView] = React.useState<"table" | "kanban">("table")
 
@@ -170,6 +173,11 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   function handleEdit(task: ProjectTask) {
     setEditTask(task)
     setEditOpen(true)
+  }
+
+  function handleOpenComments(task: ProjectTask) {
+    setCommentsTask(task)
+    setCommentsOpen(true)
   }
 
   const progress = projectProgress(tasks)
@@ -321,9 +329,14 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               tasks={visible}
               loading={loading}
               onEdit={handleEdit}
+              onOpenComments={handleOpenComments}
             />
           ) : (
-            <ProjectKanban tasks={visible} onEdit={handleEdit} />
+            <ProjectKanban
+              tasks={visible}
+              onEdit={handleEdit}
+              onOpenComments={handleOpenComments}
+            />
           )}
 
           <p className="text-xs text-muted-foreground">
@@ -349,6 +362,12 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             projectEndDate={project.endDate}
             open={editOpen}
             onOpenChange={setEditOpen}
+          />
+
+          <ProjectTaskCommentsDialog
+            task={commentsTask}
+            open={commentsOpen}
+            onOpenChange={setCommentsOpen}
           />
         </>
       ) : null}

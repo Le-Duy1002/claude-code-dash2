@@ -5,6 +5,7 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   ChevronsUpDownIcon,
+  MessageSquareIcon,
   PencilIcon,
 } from "lucide-react"
 
@@ -125,10 +126,12 @@ export function ProjectTaskTable({
   tasks,
   loading,
   onEdit,
+  onOpenComments,
 }: {
   tasks: ProjectTask[]
   loading: boolean
   onEdit: (task: ProjectTask) => void
+  onOpenComments: (task: ProjectTask) => void
 }) {
   const [sort, setSort] = React.useState<SortState | null>(null)
 
@@ -211,6 +214,15 @@ export function ProjectTaskTable({
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8 text-muted-foreground"
+                        onClick={() => onOpenComments(task)}
+                      >
+                        <MessageSquareIcon />
+                        <span className="sr-only">Bình luận</span>
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"

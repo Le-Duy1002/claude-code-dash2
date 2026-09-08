@@ -7,6 +7,7 @@ export {
 } from "./components/project-task-dialogs"
 export { ProjectTaskTable } from "./components/project-task-table"
 export { ProjectKanban } from "./components/project-kanban"
+export { ProjectTaskCommentsDialog } from "./components/project-task-comments"
 export {
   createProject,
   subscribeToProject,
@@ -14,6 +15,11 @@ export {
   updateProject,
 } from "./services/projects-service"
 export { ensureProjectFolder } from "./services/project-folder-service"
+export {
+  addProjectTaskComment,
+  deleteProjectTaskCommentThread,
+  subscribeToProjectTaskComments,
+} from "./services/project-comments-service"
 export {
   deleteProjectDocument,
   renameProjectDocument,
