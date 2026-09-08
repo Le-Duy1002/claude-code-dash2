@@ -70,6 +70,8 @@ export async function POST(
       driveFileId: drive.id,
       webViewLink: drive.webViewLink,
       driveModifiedTime: drive.modifiedTime,
+      parentId: "",
+      isFolder: false,
       uploadedByName: user.name || user.email || "Người dùng",
       source: "web",
       createdAt: FieldValue.serverTimestamp(),

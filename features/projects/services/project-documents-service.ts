@@ -8,6 +8,12 @@ import {
 import { auth, db } from "@/lib/firebase"
 import type { DocumentItem } from "@/features/documents/types"
 
+export type ProjectDocItem = DocumentItem & {
+  /** immediate parent folder id relative to the project root ("" = root) */
+  parentId: string
+  isFolder: boolean
+}
+
 function projectDocsCollection(projectId: string) {
   return collection(db, "projects", projectId, "documents")
 }
@@ -16,7 +22,7 @@ function toMillis(value: unknown): number {
   return value instanceof Timestamp ? value.toMillis() : 0
 }
 
-function mapDoc(id: string, data: Record<string, unknown>): DocumentItem {
+function mapDoc(id: string, data: Record<string, unknown>): ProjectDocItem {
   return {
     id,
     name: (data.name as string) ?? "",
@@ -27,6 +33,8 @@ function mapDoc(id: string, data: Record<string, unknown>): DocumentItem {
     driveFileId: (data.driveFileId as string) ?? id,
     webViewLink: (data.webViewLink as string) ?? "",
     driveModifiedTime: (data.driveModifiedTime as string) ?? "",
+    parentId: (data.parentId as string) ?? "",
+    isFolder: Boolean(data.isFolder),
     uploadedByName: (data.uploadedByName as string) ?? "—",
     source: (data.source as string) ?? "drive",
     createdAt: toMillis(data.createdAt),
@@ -36,7 +44,7 @@ function mapDoc(id: string, data: Record<string, unknown>): DocumentItem {
 
 export function subscribeToProjectDocuments(
   projectId: string,
-  onData: (docs: DocumentItem[]) => void,
+  onData: (docs: ProjectDocItem[]) => void,
   onError?: (error: Error) => void
 ): Unsubscribe {
   return onSnapshot(

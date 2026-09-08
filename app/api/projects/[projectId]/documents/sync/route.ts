@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { FieldValue } from "firebase-admin/firestore"
 
 import { adminAuth, adminDb } from "@/lib/firebase-admin"
-import { listFolderFiles } from "@/lib/google-drive"
+import { listFolderTree } from "@/lib/google-drive"
 import { ensureProjectDriveFolder } from "@/lib/project-drive"
 
 export const runtime = "nodejs"
@@ -47,9 +47,9 @@ export async function POST(
     return NextResponse.json({ error: (error as Error).message }, { status })
   }
 
-  let driveFiles
+  let driveItems
   try {
-    driveFiles = await listFolderFiles(folder.id)
+    driveItems = await listFolderTree(folder.id)
   } catch (error) {
     return NextResponse.json(
       { error: "drive_list_failed", detail: (error as Error).message },
@@ -71,9 +71,11 @@ export async function POST(
   let updated = 0
   let deleted = 0
 
-  for (const file of driveFiles) {
+  for (const file of driveItems) {
     seen.add(file.id)
     const prev = existing.get(file.id)
+    // parent relative to the project folder ("" = at the root)
+    const parentId = file.parentId === folder.id ? "" : file.parentId
     const data = {
       name: file.name,
       fileName: file.name,
@@ -82,6 +84,8 @@ export async function POST(
       driveFileId: file.id,
       webViewLink: file.webViewLink,
       driveModifiedTime: file.modifiedTime,
+      parentId,
+      isFolder: file.isFolder,
       uploadedByName:
         prev?.get("uploadedByName") ?? file.lastModifyingUser ?? "Google Drive",
       source: prev?.get("source") ?? "drive",
@@ -95,7 +99,9 @@ export async function POST(
       created += 1
     } else if (
       prev.get("driveModifiedTime") !== file.modifiedTime ||
-      prev.get("name") !== file.name
+      prev.get("name") !== file.name ||
+      (prev.get("parentId") ?? "") !== parentId ||
+      Boolean(prev.get("isFolder")) !== file.isFolder
     ) {
       void writer.set(collection.doc(file.id), data, { merge: true })
       updated += 1
@@ -113,7 +119,7 @@ export async function POST(
 
   return NextResponse.json({
     ok: true,
-    total: driveFiles.length,
+    total: driveItems.length,
     created,
     updated,
     deleted,

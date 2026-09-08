@@ -81,5 +81,18 @@ export async function DELETE(request: Request, { params }: Params) {
   }
 
   await ref.delete()
+
+  // a deleted folder takes its Drive contents with it — drop the direct mirror
+  // children too (deeper nesting is tidied on the next sync)
+  if (snap.get("isFolder")) {
+    const kids = await adminDb()
+      .collection("projects")
+      .doc(projectId)
+      .collection("documents")
+      .where("parentId", "==", fileId)
+      .get()
+    await Promise.all(kids.docs.map((d) => d.ref.delete()))
+  }
+
   return NextResponse.json({ ok: true })
 }

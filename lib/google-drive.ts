@@ -257,3 +257,59 @@ export async function listFolderFiles(folderId: string): Promise<DriveFile[]> {
 
   return files
 }
+
+export type DriveTreeItem = DriveFile & {
+  /** Drive id of the immediate parent folder */
+  parentId: string
+  isFolder: boolean
+}
+
+const FOLDER_MIME = "application/vnd.google-apps.folder"
+
+/**
+ * Walks `rootId` breadth-first and returns every folder + file under it
+ * (each item carries its immediate `parentId`). Bounded by `maxDepth` and
+ * `maxItems` so a pathological tree can't stall the request.
+ */
+export async function listFolderTree(
+  rootId: string,
+  { maxDepth = 6, maxItems = 800 }: { maxDepth?: number; maxItems?: number } = {}
+): Promise<DriveTreeItem[]> {
+  const drive = readClient()
+  const out: DriveTreeItem[] = []
+  let queue: { id: string; depth: number }[] = [{ id: rootId, depth: 0 }]
+
+  while (queue.length > 0 && out.length < maxItems) {
+    const next: typeof queue = []
+    for (const { id, depth } of queue) {
+      let pageToken: string | undefined
+      do {
+        const response = await drive.files.list({
+          q: `'${id}' in parents and trashed = false`,
+          fields: `nextPageToken, files(${DRIVE_FIELDS}, lastModifyingUser(displayName))`,
+          pageSize: 1000,
+          orderBy: "folder,name",
+          pageToken,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        })
+        for (const file of response.data.files ?? []) {
+          if (!file.id || out.length >= maxItems) continue
+          const isFolder = file.mimeType === FOLDER_MIME
+          out.push({
+            ...mapFile(file),
+            lastModifyingUser: file.lastModifyingUser?.displayName ?? undefined,
+            parentId: id,
+            isFolder,
+          })
+          if (isFolder && depth + 1 < maxDepth) {
+            next.push({ id: file.id, depth: depth + 1 })
+          }
+        }
+        pageToken = response.data.nextPageToken ?? undefined
+      } while (pageToken)
+    }
+    queue = next
+  }
+  return out
+}
