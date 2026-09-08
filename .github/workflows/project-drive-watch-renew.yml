@@ -1,0 +1,25 @@
+name: Renew project Drive webhook
+
+# Re-registers the Drive change-feed webhook before it expires (~7 days,
+# UC-DOC-03). No-op until PROJECT_DRIVE_WEBHOOK_URL is set on the host.
+# Required repo secrets:
+#   PROJECT_WATCH_URL     https://<your-app>.vercel.app/api/projects/drive-webhook/register
+#   PROJECT_SYNC_SECRET   same value as the CRON_SECRET env var on the host
+
+on:
+  schedule:
+    - cron: "17 */12 * * *"
+  workflow_dispatch:
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Renew Drive watch channel
+        run: |
+          curl --silent --show-error --fail-with-body \
+            -X POST "$PROJECT_WATCH_URL" \
+            -H "Authorization: Bearer $PROJECT_SYNC_SECRET"
+        env:
+          PROJECT_WATCH_URL: ${{ secrets.PROJECT_WATCH_URL }}
+          PROJECT_SYNC_SECRET: ${{ secrets.PROJECT_SYNC_SECRET }}

@@ -76,6 +76,11 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Trạng thái kênh theo dõi Drive của dự án — chỉ Admin SDK.
+    match /projectDriveMeta/{doc} {
+      allow read, write: if false;
+    }
+
     // ---------------------------------------------------------- Admin SDK ghi
 
     // Thư viện tài liệu — bản sao thư mục Google Drive do máy chủ đồng bộ.

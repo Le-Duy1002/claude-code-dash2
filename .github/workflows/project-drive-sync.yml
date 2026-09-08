@@ -1,0 +1,26 @@
+name: Sync project documents (fallback)
+
+# Reconciles every project's document mirror with its Drive folder every
+# ~12 minutes — the safety net behind the near-realtime Drive webhook
+# (UC-DOC-04). Also covers the case where the webhook is not configured.
+# Required repo secrets:
+#   PROJECT_SYNC_URL     https://<your-app>.vercel.app/api/projects/documents/sync-all
+#   PROJECT_SYNC_SECRET  same value as the CRON_SECRET env var on the host
+
+on:
+  schedule:
+    - cron: "*/12 * * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger project document sync
+        run: |
+          curl --silent --show-error --fail-with-body \
+            -X POST "$PROJECT_SYNC_URL" \
+            -H "Authorization: Bearer $PROJECT_SYNC_SECRET"
+        env:
+          PROJECT_SYNC_URL: ${{ secrets.PROJECT_SYNC_URL }}
+          PROJECT_SYNC_SECRET: ${{ secrets.PROJECT_SYNC_SECRET }}

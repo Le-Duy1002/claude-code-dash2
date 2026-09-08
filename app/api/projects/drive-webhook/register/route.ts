@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server"
 
 import { adminAuth } from "@/lib/firebase-admin"
-import { reconcileProjectDocuments } from "@/lib/project-drive"
+import { registerDriveWatch } from "@/lib/project-drive"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-export const maxDuration = 60
+export const maxDuration = 30
 
 async function authorize(request: Request): Promise<boolean> {
   const token = (request.headers.get("authorization") ?? "").replace(
@@ -22,23 +22,23 @@ async function authorize(request: Request): Promise<boolean> {
   }
 }
 
-/** Reconciles this project's document mirror with its Drive folder tree. */
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ projectId: string }> }
-) {
+/**
+ * Registers / renews the Drive change-feed webhook (UC-DOC-03). Run on a cron
+ * every ~12h; renews only when the channel is within a day of expiry.
+ * `?force=1` re-registers unconditionally.
+ */
+export async function POST(request: Request) {
   if (!(await authorize(request))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 })
   }
-  const { projectId } = await params
+  const force = new URL(request.url).searchParams.get("force") === "1"
   try {
-    const result = await reconcileProjectDocuments(projectId)
+    const result = await registerDriveWatch(force)
     return NextResponse.json({ ok: true, ...result })
   } catch (error) {
-    const status = (error as { status?: number }).status ?? 502
     return NextResponse.json(
-      { error: "sync_failed", detail: (error as Error).message },
-      { status }
+      { error: "register_failed", detail: (error as Error).message },
+      { status: 502 }
     )
   }
 }

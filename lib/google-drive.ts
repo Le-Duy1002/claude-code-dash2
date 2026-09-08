@@ -167,6 +167,54 @@ export async function renameProjectFile(
   return mapFile(response.data)
 }
 
+// ---------------------------------------------- Drive push notifications (watch)
+
+/** A page token to start a `changes.watch` / `changes.list` from. */
+export async function getChangesStartPageToken(): Promise<string> {
+  const drive = readClient()
+  const res = await drive.changes.getStartPageToken({
+    supportsAllDrives: true,
+  })
+  return res.data.startPageToken ?? ""
+}
+
+/**
+ * Subscribes a web-hook to the read account's Drive change feed (which only
+ * contains what has been shared with it — i.e. the "Dự án" folder subtree).
+ * Any change there pings `address`.
+ */
+export async function watchChanges(params: {
+  channelId: string
+  address: string
+  token: string
+  pageToken: string
+}): Promise<{ resourceId: string; expiration: number }> {
+  const drive = readClient()
+  const res = await drive.changes.watch({
+    pageToken: params.pageToken,
+    supportsAllDrives: true,
+    requestBody: {
+      id: params.channelId,
+      type: "web_hook",
+      address: params.address,
+      token: params.token,
+    },
+  })
+  return {
+    resourceId: res.data.resourceId ?? "",
+    expiration: Number(res.data.expiration ?? 0),
+  }
+}
+
+/** Stops a previously opened watch channel. */
+export async function stopChannel(
+  channelId: string,
+  resourceId: string
+): Promise<void> {
+  const drive = readClient()
+  await drive.channels.stop({ requestBody: { id: channelId, resourceId } })
+}
+
 /** Deletes a file in a project folder. */
 export async function deleteProjectFile(fileId: string): Promise<void> {
   const drive = projectsWriteClient()

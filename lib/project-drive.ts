@@ -1,9 +1,17 @@
 import "server-only"
 
+import { randomUUID } from "node:crypto"
+
 import { FieldValue } from "firebase-admin/firestore"
 
 import { adminDb } from "./firebase-admin"
-import { createProjectFolder } from "./google-drive"
+import {
+  createProjectFolder,
+  getChangesStartPageToken,
+  listFolderTree,
+  stopChannel,
+  watchChanges,
+} from "./google-drive"
 
 export type ProjectFolder = { id: string; url: string; name: string }
 
@@ -47,5 +55,199 @@ export async function ensureProjectDriveFolder(
     driveFolderPending: false,
     updatedAt: FieldValue.serverTimestamp(),
   })
+  // make sure the change-feed webhook is live now that there is a folder to
+  // watch (no-op locally / until PROJECT_DRIVE_WEBHOOK_URL is set)
+  registerDriveWatch().catch(() => {})
   return { id: folder.id, url: folder.webViewLink, name: displayName }
+}
+
+export type SyncResult = {
+  total: number
+  created: number
+  updated: number
+  deleted: number
+}
+
+/**
+ * Reconciles `projects/{id}/documents` with the current contents of the
+ * project's Drive folder tree. Shared by the per-project sync route, the
+ * sync-all cron, and the Drive webhook.
+ */
+export async function reconcileProjectDocuments(
+  projectId: string
+): Promise<SyncResult> {
+  const folder = await ensureProjectDriveFolder(projectId)
+  const items = await listFolderTree(folder.id)
+
+  const db = adminDb()
+  const collection = db
+    .collection("projects")
+    .doc(projectId)
+    .collection("documents")
+  const snapshot = await collection.get()
+  const existing = new Map(snapshot.docs.map((d) => [d.id, d]))
+
+  const writer = db.bulkWriter()
+  const seen = new Set<string>()
+  let created = 0
+  let updated = 0
+  let deleted = 0
+
+  for (const file of items) {
+    seen.add(file.id)
+    const prev = existing.get(file.id)
+    const parentId = file.parentId === folder.id ? "" : file.parentId
+    const data = {
+      name: file.name,
+      fileName: file.name,
+      size: file.size,
+      contentType: file.mimeType,
+      driveFileId: file.id,
+      webViewLink: file.webViewLink,
+      driveModifiedTime: file.modifiedTime,
+      parentId,
+      isFolder: file.isFolder,
+      uploadedByName:
+        prev?.get("uploadedByName") ?? file.lastModifyingUser ?? "Google Drive",
+      source: prev?.get("source") ?? "drive",
+      updatedAt: FieldValue.serverTimestamp(),
+    }
+    if (!prev) {
+      void writer.set(collection.doc(file.id), {
+        ...data,
+        createdAt: FieldValue.serverTimestamp(),
+      })
+      created += 1
+    } else if (
+      prev.get("driveModifiedTime") !== file.modifiedTime ||
+      prev.get("name") !== file.name ||
+      (prev.get("parentId") ?? "") !== parentId ||
+      Boolean(prev.get("isFolder")) !== file.isFolder
+    ) {
+      void writer.set(collection.doc(file.id), data, { merge: true })
+      updated += 1
+    }
+  }
+
+  for (const [id, doc] of existing) {
+    if (!seen.has(id)) {
+      void writer.delete(doc.ref)
+      deleted += 1
+    }
+  }
+
+  await writer.close()
+  return { total: items.length, created, updated, deleted }
+}
+
+/** Reconcile every project that has a Drive folder. */
+export async function reconcileAllProjectDocuments(): Promise<{
+  projects: number
+  warnings: string[]
+}> {
+  const snap = await adminDb().collection("projects").get()
+  const ids = snap.docs.filter((d) => d.get("driveFolderId")).map((d) => d.id)
+  const warnings: string[] = []
+  for (const id of ids) {
+    try {
+      await reconcileProjectDocuments(id)
+    } catch (error) {
+      warnings.push(`${id}: ${(error as Error).message}`)
+    }
+  }
+  return { projects: ids.length, warnings }
+}
+
+// ------------------------------------------------ Drive watch (near-realtime)
+
+const watchDoc = () =>
+  adminDb().collection("projectDriveMeta").doc("driveWatch")
+
+/** ms before expiry at which the renewal cron re-registers a channel. */
+const RENEW_MARGIN_MS = 24 * 60 * 60 * 1000
+/** ignore webhook pings that land within this window of the last sync. */
+export const WEBHOOK_DEBOUNCE_MS = 20 * 1000
+
+/**
+ * Registers (or renews) the Drive change-feed web-hook for the "Dự án" subtree.
+ * No-op when `PROJECT_DRIVE_WEBHOOK_URL` is unset (local / pre-deploy).
+ */
+export async function registerDriveWatch(force = false): Promise<{
+  registered: boolean
+  expiresAt: number
+  reason?: string
+}> {
+  const address = process.env.PROJECT_DRIVE_WEBHOOK_URL
+  if (!address) {
+    return {
+      registered: false,
+      expiresAt: 0,
+      reason: "PROJECT_DRIVE_WEBHOOK_URL chưa cấu hình",
+    }
+  }
+  const token = process.env.CRON_SECRET ?? ""
+  const ref = watchDoc()
+  const current = (await ref.get()).data()
+
+  if (
+    !force &&
+    typeof current?.expirationMs === "number" &&
+    current.expirationMs - Date.now() > RENEW_MARGIN_MS
+  ) {
+    return {
+      registered: false,
+      expiresAt: current.expirationMs,
+      reason: "kênh còn hiệu lực",
+    }
+  }
+
+  const channelId = randomUUID()
+  const pageToken = await getChangesStartPageToken()
+  const { resourceId, expiration } = await watchChanges({
+    channelId,
+    address,
+    token,
+    pageToken,
+  })
+
+  if (current?.channelId && current?.resourceId) {
+    try {
+      await stopChannel(current.channelId, current.resourceId)
+    } catch {
+      /* old channel may already be gone */
+    }
+  }
+
+  const expirationMs = expiration || Date.now() + 6 * 24 * 60 * 60 * 1000
+  await ref.set(
+    {
+      channelId,
+      resourceId,
+      expirationMs,
+      address,
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  )
+  return { registered: true, expiresAt: expirationMs }
+}
+
+/** Records that a webhook-triggered sync just ran (for debouncing). */
+export async function markWebhookSync(): Promise<void> {
+  await watchDoc().set({ lastSyncMs: Date.now() }, { merge: true })
+}
+
+/** True if a webhook sync ran within the debounce window. */
+export async function webhookRecentlySynced(): Promise<boolean> {
+  const data = (await watchDoc().get()).data()
+  return (
+    typeof data?.lastSyncMs === "number" &&
+    Date.now() - data.lastSyncMs < WEBHOOK_DEBOUNCE_MS
+  )
+}
+
+/** Verifies the token Drive echoes back in `X-Goog-Channel-Token`. */
+export function isValidWebhookToken(token: string | null): boolean {
+  const expected = process.env.CRON_SECRET
+  return Boolean(expected) && token === expected
 }

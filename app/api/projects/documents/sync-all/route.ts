@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server"
 
 import { adminAuth } from "@/lib/firebase-admin"
-import { reconcileProjectDocuments } from "@/lib/project-drive"
+import { reconcileAllProjectDocuments } from "@/lib/project-drive"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-export const maxDuration = 60
+export const maxDuration = 300
 
 async function authorize(request: Request): Promise<boolean> {
   const token = (request.headers.get("authorization") ?? "").replace(
@@ -22,23 +22,14 @@ async function authorize(request: Request): Promise<boolean> {
   }
 }
 
-/** Reconciles this project's document mirror with its Drive folder tree. */
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ projectId: string }> }
-) {
+/**
+ * Fallback scan (UC-DOC-04): reconciles every project's document mirror with
+ * its Drive folder — the safety net behind the near-realtime webhook.
+ */
+export async function POST(request: Request) {
   if (!(await authorize(request))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 })
   }
-  const { projectId } = await params
-  try {
-    const result = await reconcileProjectDocuments(projectId)
-    return NextResponse.json({ ok: true, ...result })
-  } catch (error) {
-    const status = (error as { status?: number }).status ?? 502
-    return NextResponse.json(
-      { error: "sync_failed", detail: (error as Error).message },
-      { status }
-    )
-  }
+  const result = await reconcileAllProjectDocuments()
+  return NextResponse.json({ ok: true, ...result })
 }
