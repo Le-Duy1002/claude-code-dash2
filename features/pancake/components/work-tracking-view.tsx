@@ -5,7 +5,6 @@ import {
   AlertTriangleIcon,
   ChevronDownIcon,
   DownloadCloudIcon,
-  ExternalLinkIcon,
   RefreshCwIcon,
   XIcon,
 } from "lucide-react"
@@ -55,13 +54,13 @@ import {
   SHIFT_OPTIONS,
   formatDate,
   formatDateTime,
-  pancakeConvLink,
   type PageKey,
   type ShiftKey,
   type StaffEvaluation,
   type WorkReport,
 } from "../types"
 import { DateRangePicker, type RangeValue } from "./date-range-picker"
+import { OffenderList } from "./offender-list"
 
 const SCORE_CLASS: Record<Score, string> = {
   1: "bg-destructive/10 text-destructive",
@@ -131,43 +130,6 @@ function DrillPanel({
 }) {
   const def = CRITERION_BY_ID.get(criterionId)!
   const result = staff.criteria.find((c) => c.id === criterionId)!
-  const [showDetails, setShowDetails] = React.useState(false)
-
-  function copyText(text: string, note: string) {
-    navigator.clipboard?.writeText(text).then(
-      () => toast.success(note),
-      () => toast.error("Không copy được")
-    )
-  }
-
-  // group repeated offenders (same conversation / same reason)
-  const grouped = React.useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        atMs: number
-        label: string
-        detail?: string
-        customerId?: string
-        pageId?: string
-        conversationId?: string
-        count: number
-      }
-    >()
-    for (const e of result.offenders) {
-      const key = `${e.label}|${e.detail ?? ""}`
-      const prev = map.get(key)
-      if (prev) {
-        prev.count += 1
-        prev.atMs = Math.min(prev.atMs, e.atMs)
-      } else {
-        map.set(key, { ...e, count: 1 })
-      }
-    }
-    return [...map.values()].sort((a, b) => a.atMs - b.atMs)
-  }, [result.offenders])
-
-  const hasConvIds = grouped.some((e) => e.conversationId)
 
   return (
     <div className="mt-3 overflow-hidden rounded-lg border">
@@ -222,94 +184,9 @@ function DrillPanel({
           </div>
         </div>
 
-        {grouped.length > 0 && (
-          <div>
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <p className="text-xs font-medium text-muted-foreground">
-                {hasConvIds
-                  ? `Hội thoại làm mất điểm (${result.offenders.length}${
-                      result.offenders.length >= 40 ? "+" : ""
-                    }) — bấm tên để copy, bấm ID để copy ID hội thoại`
-                  : `Chi tiết làm mất điểm (${result.offenders.length}${
-                      result.offenders.length >= 40 ? "+" : ""
-                    })`}
-              </p>
-              {hasConvIds ? (
-                <button
-                  type="button"
-                  onClick={() => setShowDetails((v) => !v)}
-                  className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
-                  aria-expanded={showDetails}
-                >
-                  {showDetails ? "Ẩn ID hội thoại" : "Hiện ID hội thoại"}
-                  <ChevronDownIcon
-                    className={cn(
-                      "size-3.5 transition-transform",
-                      showDetails && "rotate-180"
-                    )}
-                  />
-                </button>
-              ) : null}
-            </div>
-            <ul className="flex flex-col divide-y rounded-md border text-sm">
-              {grouped.map((e, i) => {
-                const link = pancakeConvLink(e.pageId, e.conversationId)
-                return (
-                  <li key={i} className="flex flex-col gap-0.5 px-2.5 py-1.5">
-                    <div className="flex flex-wrap items-baseline gap-x-2">
-                      <span className="tabular-nums text-muted-foreground">
-                        {formatDateTime(e.atMs)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          copyText(e.label, `Đã copy tên: ${e.label}`)
-                        }
-                        className="font-medium underline-offset-2 hover:underline"
-                        title="Bấm để copy tên khách"
-                      >
-                        {e.label}
-                      </button>
-                      {link ? (
-                        <a
-                          href={link}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
-                          title="Mở hội thoại trên Pancake"
-                        >
-                          <ExternalLinkIcon className="size-3.5" />
-                          Pancake
-                        </a>
-                      ) : null}
-                      {e.detail ? (
-                        <span className="text-destructive">— {e.detail}</span>
-                      ) : null}
-                      {e.count > 1 ? (
-                        <span className="text-muted-foreground">×{e.count}</span>
-                      ) : null}
-                    </div>
-                    {showDetails && e.conversationId ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          copyText(
-                            e.conversationId!,
-                            "Đã copy ID hội thoại"
-                          )
-                        }
-                        className="w-fit font-mono text-[0.7rem] text-muted-foreground underline-offset-2 hover:underline"
-                        title="Bấm để copy ID hội thoại"
-                      >
-                        ID: {e.conversationId}
-                      </button>
-                    ) : null}
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
-        )}
+        {result.offenders.length > 0 ? (
+          <OffenderList events={result.offenders} />
+        ) : null}
       </div>
     </div>
   )

@@ -393,6 +393,10 @@ export type DailyLogRow = {
   note: string
   synced: boolean
   partial: boolean
+  /** conversations behind the error counts, for the row drill-down */
+  slowEvents: ScoreEventLite[]
+  missedEvents: ScoreEventLite[]
+  tagWrongEvents: ScoreEventLite[]
 }
 
 export type DailyLogTotals = {

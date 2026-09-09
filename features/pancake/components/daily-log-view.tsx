@@ -1,7 +1,12 @@
 "use client"
 
 import * as React from "react"
-import { AlertTriangleIcon, DownloadCloudIcon, RefreshCwIcon } from "lucide-react"
+import {
+  AlertTriangleIcon,
+  DownloadCloudIcon,
+  RefreshCwIcon,
+  XIcon,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth-provider"
@@ -44,9 +49,25 @@ import {
   type DailyLogRow,
   type DailyLogTotals,
   type PageKey,
+  type ScoreEventLite,
   type ShiftKey,
 } from "../types"
 import { DateRangePicker, type RangeValue } from "./date-range-picker"
+import { OffenderList } from "./offender-list"
+
+type DrillKind = "slow" | "missed" | "tagWrong"
+type Drill = { date: string; kind: DrillKind } | null
+
+const DRILL_LABEL: Record<DrillKind, string> = {
+  slow: "Rep chậm (3–15′)",
+  missed: "Bỏ sót (> 15′)",
+  tagWrong: "Tag sai / thiếu",
+}
+const DRILL_EVENTS: Record<DrillKind, (r: DailyLogRow) => ScoreEventLite[]> = {
+  slow: (r) => r.slowEvents,
+  missed: (r) => r.missedEvents,
+  tagWrong: (r) => r.tagWrongEvents,
+}
 
 const STAFF_OPTIONS = STAFF.map((s) => ({ value: s.key, label: s.name }))
 
@@ -85,6 +106,8 @@ type Col = {
   label: string
   align: "left" | "right"
   cls?: string
+  /** clickable → opens the row drill-down for this error kind */
+  drill?: DrillKind
   cell: (r: DailyLogRow) => React.ReactNode
   total: (t: DailyLogTotals) => React.ReactNode
 }
@@ -107,11 +130,11 @@ const COLS: Col[] = [
     cell: (r) => n(r.replyOnTime),
     total: (t) => t.replyOnTime },
   { group: "inbox", label: "Rep chậm (3–15′)", align: "right",
-    cls: "text-amber-600 dark:text-amber-400",
+    cls: "text-amber-600 dark:text-amber-400", drill: "slow",
     cell: (r) => n(r.replySlow),
     total: (t) => t.replySlow },
   { group: "inbox", label: "Bỏ sót (> 15′)", align: "right",
-    cls: "text-destructive",
+    cls: "text-destructive", drill: "missed",
     cell: (r) => n(r.missed),
     total: (t) => t.missed },
   { group: "inbox", label: "Tag đúng", align: "right",
@@ -119,7 +142,7 @@ const COLS: Col[] = [
     cell: (r) => n(r.tagCorrect),
     total: (t) => t.tagCorrect },
   { group: "inbox", label: "Tag sai / thiếu", align: "right",
-    cls: "text-destructive",
+    cls: "text-destructive", drill: "tagWrong",
     cell: (r) => n(r.tagWrong),
     total: (t) => t.tagWrong },
   { group: "chot", label: "Khách xem demo", align: "right",
@@ -153,9 +176,21 @@ function rangeText(data: DailyLogResponse): string {
     : RANGE_LABELS[data.range]
 }
 
-function LogTable({ data }: { data: DailyLogResponse }) {
+function LogTable({
+  data,
+  drill,
+  onDrill,
+}: {
+  data: DailyLogResponse
+  drill: Drill
+  onDrill: (next: Drill) => void
+}) {
+  const drillRow = drill
+    ? data.rows.find((r) => r.date === drill.date)
+    : undefined
   return (
-    <div className="overflow-x-auto rounded-lg border">
+    <div className="rounded-lg border">
+      <div className="overflow-x-auto">
       <Table className="min-w-[960px] text-xs [&_td]:border-r [&_th]:border-r [&_td:last-child]:border-r-0 [&_th:last-child]:border-r-0">
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -197,19 +232,45 @@ function LogTable({ data }: { data: DailyLogResponse }) {
               key={row.date}
               className={cn(!row.synced && "opacity-45")}
             >
-              {COLS.map((c, i) => (
-                <TableCell
-                  key={i}
-                  className={cn(
-                    "px-2 py-1.5 whitespace-nowrap",
-                    c.align === "right" && "text-right tabular-nums",
-                    c.cls,
-                    divCls(i)
-                  )}
-                >
-                  {c.cell(row)}
-                </TableCell>
-              ))}
+              {COLS.map((c, i) => {
+                const events = c.drill ? DRILL_EVENTS[c.drill](row) : []
+                const clickable = c.drill && events.length > 0
+                const isActive =
+                  drill?.date === row.date && drill?.kind === c.drill
+                return (
+                  <TableCell
+                    key={i}
+                    className={cn(
+                      "px-2 py-1.5 whitespace-nowrap",
+                      c.align === "right" && "text-right tabular-nums",
+                      c.cls,
+                      divCls(i)
+                    )}
+                  >
+                    {clickable ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onDrill(
+                            isActive
+                              ? null
+                              : { date: row.date, kind: c.drill as DrillKind }
+                          )
+                        }
+                        className={cn(
+                          "-mx-1 rounded px-1 font-medium underline decoration-dotted underline-offset-2 hover:decoration-solid",
+                          isActive && "bg-foreground/10 no-underline"
+                        )}
+                        title="Bấm để xem hội thoại làm mất điểm"
+                      >
+                        {c.cell(row)}
+                      </button>
+                    ) : (
+                      c.cell(row)
+                    )}
+                  </TableCell>
+                )
+              })}
             </TableRow>
           ))}
         </TableBody>
@@ -234,6 +295,31 @@ function LogTable({ data }: { data: DailyLogResponse }) {
           </TableRow>
         </TableFooter>
       </Table>
+      </div>
+
+      {drill && drillRow ? (
+        <div className="border-t">
+          <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-2">
+            <p className="text-sm font-medium">
+              {data.staffName}
+              <span className="mx-1.5 text-muted-foreground">·</span>
+              {vnDate(drill.date)}
+              <span className="mx-1.5 text-muted-foreground">·</span>
+              {DRILL_LABEL[drill.kind]}
+            </p>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => onDrill(null)}
+            >
+              <XIcon />
+            </Button>
+          </div>
+          <div className="p-3">
+            <OffenderList events={DRILL_EVENTS[drill.kind](drillRow)} />
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -284,12 +370,14 @@ export function DailyLogView() {
   const [loading, setLoading] = React.useState(false)
   const [syncing, setSyncing] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [drill, setDrill] = React.useState<Drill>(null)
 
   const load = React.useCallback(() => {
     if (!user) return
     const controller = new AbortController()
     setLoading(true)
     setError(null)
+    setDrill(null)
     fetchDailyLog({ staff, ...dateRange, shift, page }, controller.signal)
       .then(setData)
       .catch((cause: Error) => {
@@ -456,7 +544,7 @@ export function DailyLogView() {
             </p>
           </CardHeader>
           <CardContent>
-            <LogTable data={data} />
+            <LogTable data={data} drill={drill} onDrill={setDrill} />
             <div className="mt-3 flex flex-col gap-1.5 text-xs text-muted-foreground">
               <p>
                 <strong>Tổng hội thoại</strong> = số khách có nhắn tin mà nhân

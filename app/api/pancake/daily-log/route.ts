@@ -131,6 +131,18 @@ export async function GET(request: Request) {
     if (acc.missed > 0) notes.push(`${acc.missed} hội thoại bỏ sót`)
     if (acc.tagWrong > 0) notes.push(`${acc.tagWrong} hội thoại tag sai/thiếu`)
 
+    const dedupe = (events: typeof acc.slowEvents) => {
+      const seen = new Set<string>()
+      return events
+        .filter((e) => {
+          const key = `${e.atMs}|${e.label}|${e.detail ?? ""}`
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+        .sort((a, b) => a.atMs - b.atMs)
+    }
+
     return {
       date,
       shift: workedShifts.length
@@ -149,6 +161,9 @@ export async function GET(request: Request) {
       note: notes.join(" · "),
       synced: Boolean(doc),
       partial,
+      slowEvents: dedupe(acc.slowEvents),
+      missedEvents: dedupe(acc.missedEvents),
+      tagWrongEvents: dedupe(acc.tagWrongEvents),
     }
   })
 
