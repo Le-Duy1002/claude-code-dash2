@@ -10,6 +10,8 @@ import {
   fetchPageTags,
   hasInboxToken,
   pancakePages,
+  type PancakeConversation,
+  type PancakeOrder,
   type PancakePage,
   type PancakeShop,
 } from "@/lib/pancake"
@@ -95,23 +97,16 @@ function trimEvents(tree: ShopTree) {
 
 // -------------------------------------------------- orders (recomputed each run)
 
-async function syncShopOrders(
-  shop: PancakeShop,
+/** Bucket a pre-fetched order list into one Vietnam day's [fromMs, toMs). */
+function bucketShopOrders(
+  orders: PancakeOrder[],
   fromMs: number,
   toMs: number,
   demoTagIds: Set<number>,
-  convTags: Map<string, number[]>,
-  warnings: string[]
-): Promise<{ tree: ShopTree; closedOrderConvIds: Set<string> }> {
+  convTags: Map<string, number[]>
+): { tree: ShopTree; closedOrderConvIds: Set<string> } {
   const tree: ShopTree = {}
   const closedOrderConvIds = new Set<string>()
-
-  let orders: Awaited<ReturnType<typeof fetchOrdersSince>> = []
-  try {
-    orders = await fetchOrdersSince(shop, fromMs, { pageSize: 100, maxPages: 80 })
-  } catch (error) {
-    warnings.push(`${shop.name}: đơn hàng — ${(error as Error).message}`)
-  }
 
   for (const order of orders) {
     if (order.insertedAtMs < fromMs || order.insertedAtMs >= toMs) continue
@@ -388,13 +383,95 @@ async function syncShopInbox(
   return { tree, crawled: crawlSet.length, partial }
 }
 
-/** Crawl one Vietnam calendar day and write `pancakeAgentDaily/{date}`.
- * `fresh` ignores any earlier sync of that day and rebuilds from scratch. */
-export async function syncDay(
+// ---------------------------------------------- per-page fetch (once per range)
+// The tag catalogue, the conversation list and the order list are pulled ONCE
+// for the whole date span, then each day is built by filtering that shared data.
+// Syncing a month is one conversation walk, not 30.
+
+type PageInputs = {
+  page: PancakePage
+  shop: PancakeShop | null
+  tagId: TagSets
+  conversations: PancakeConversation[]
+  convTags: Map<string, number[]>
+  orders: PancakeOrder[]
+  warnings: string[]
+}
+
+async function fetchPageInputs(
+  page: PancakePage,
+  rangeFromMs: number,
+  spanDays: number
+): Promise<PageInputs> {
+  const warnings: string[] = []
+  const tagId: TagSets = {
+    demo: new Set<number>(),
+    tiemNang: new Set<number>(),
+    daChot: new Set<number>(),
+    noReplyNeeded: new Set<number>(),
+  }
+  let conversations: PancakeConversation[] = []
+
+  if (hasInboxToken() && page.fbPageId) {
+    try {
+      for (const tag of (await fetchPageTags(page.fbPageId)).values()) {
+        const text = tag.text.trim().toLowerCase()
+        const isDemo = text.includes("demo")
+        if (isDemo) tagId.demo.add(tag.id)
+        if (text === TAG_NAMES.tiemNang) tagId.tiemNang.add(tag.id)
+        if (text === TAG_NAMES.daChot) tagId.daChot.add(tag.id)
+        if (isDemo || NO_REPLY_NEEDED_TAGS.includes(text)) {
+          tagId.noReplyNeeded.add(tag.id)
+        }
+      }
+    } catch (error) {
+      warnings.push(`${page.name}: tag — ${(error as Error).message}`)
+    }
+    try {
+      conversations = await fetchConversationsSince(page.fbPageId, rangeFromMs, {
+        // a wider span needs to page deeper to reach the oldest day
+        maxBatches: Math.min(150, 40 + spanDays * 3),
+      })
+    } catch (error) {
+      warnings.push(`${page.name}: hội thoại — ${(error as Error).message}`)
+    }
+  }
+  // one conversation can come back on two inbox pages — dedupe by id
+  const byId = new Map(conversations.map((c) => [c.id, c]))
+  conversations = [...byId.values()]
+  const convTags = new Map(conversations.map((c) => [c.id, c.tagIds]))
+
+  const shop: PancakeShop | null =
+    page.apiKey && page.shopId
+      ? {
+          name: page.name,
+          apiKey: page.apiKey,
+          shopId: page.shopId,
+          fbPageId: page.fbPageId,
+        }
+      : null
+
+  let orders: PancakeOrder[] = []
+  if (shop) {
+    try {
+      orders = await fetchOrdersSince(shop, rangeFromMs, {
+        pageSize: 100,
+        maxPages: Math.min(200, 40 + spanDays * 4),
+      })
+    } catch (error) {
+      warnings.push(`${page.name}: đơn hàng — ${(error as Error).message}`)
+    }
+  }
+
+  return { page, shop, tagId, conversations, convTags, orders, warnings }
+}
+
+/** Build one Vietnam day's `pancakeAgentDaily/{date}` from pre-fetched inputs. */
+async function buildDay(
   dateISO: string,
-  fresh = false
+  inputs: PageInputs[],
+  fresh: boolean
 ): Promise<AgentDayDoc> {
-  const pages = pancakePages()
   const { fromMs, toMs } = vnDayRange(dateISO)
   const warnings: string[] = []
   if (!hasInboxToken()) {
@@ -412,80 +489,30 @@ export async function syncDay(
   let convsCrawled = 0
   let partial = false
 
-  for (const page of pages) {
-    // tag catalogue + conversation list (shared by orders + inbox)
-    const tagId: TagSets = {
-      demo: new Set<number>(),
-      tiemNang: new Set<number>(),
-      daChot: new Set<number>(),
-      noReplyNeeded: new Set<number>(),
-    }
-    let conversations: Awaited<ReturnType<typeof fetchConversationsSince>> = []
-    if (hasInboxToken() && page.fbPageId) {
-      try {
-        for (const tag of (await fetchPageTags(page.fbPageId)).values()) {
-          const text = tag.text.trim().toLowerCase()
-          // any "demo" variant (demo, demo trl, HDemo, DDemo, TDemo, QDemo,
-          // DemoTest…) is a demo conversation for scoring purposes
-          const isDemo = text.includes("demo")
-          if (isDemo) tagId.demo.add(tag.id)
-          if (text === TAG_NAMES.tiemNang) tagId.tiemNang.add(tag.id)
-          if (text === TAG_NAMES.daChot) tagId.daChot.add(tag.id)
-          if (isDemo || NO_REPLY_NEEDED_TAGS.includes(text)) {
-            tagId.noReplyNeeded.add(tag.id)
-          }
-        }
-      } catch (error) {
-        warnings.push(`${page.name}: tag — ${(error as Error).message}`)
-      }
-      try {
-        conversations = await fetchConversationsSince(page.fbPageId, fromMs, {
-          maxBatches: 40,
-        })
-      } catch (error) {
-        warnings.push(`${page.name}: hội thoại — ${(error as Error).message}`)
-      }
-    }
-    // Paginating a live inbox can return the same conversation on two pages —
-    // dedupe by id so it is never crawled (or counted) twice.
-    const byId = new Map(conversations.map((c) => [c.id, c]))
-    conversations = [...byId.values()]
-    const convTags = new Map(conversations.map((c) => [c.id, c.tagIds]))
-
-    // orders — only for pages backed by a POS shop
-    let orderTree: ShopTree = {}
-    let closedOrderConvIds = new Set<string>()
-    if (page.apiKey && page.shopId) {
-      const shop: PancakeShop = {
-        name: page.name,
-        apiKey: page.apiKey,
-        shopId: page.shopId,
-        fbPageId: page.fbPageId,
-      }
-      const orders = await syncShopOrders(
-        shop,
-        fromMs,
-        toMs,
-        tagId.demo,
-        convTags,
-        warnings
-      )
-      orderTree = orders.tree
-      closedOrderConvIds = orders.closedOrderConvIds
-    }
-    orderData[page.fbPageId] = orderTree
+  for (const input of inputs) {
+    const fbPageId = input.page.fbPageId
+    const { tree: orderTree, closedOrderConvIds } = input.shop
+      ? bucketShopOrders(
+          input.orders,
+          fromMs,
+          toMs,
+          input.tagId.demo,
+          input.convTags
+        )
+      : { tree: {} as ShopTree, closedOrderConvIds: new Set<string>() }
+    orderData[fbPageId] = orderTree
 
     const inbox = await syncShopInbox(
-      page,
+      input.page,
       fromMs,
       toMs,
-      (existing?.inboxData?.[page.fbPageId] as ShopTree) ?? {},
+      (existing?.inboxData?.[fbPageId] as ShopTree) ?? {},
       processed,
-      tagId,
+      input.tagId,
       closedOrderConvIds,
-      conversations
+      input.conversations
     )
-    inboxData[page.fbPageId] = inbox.tree
+    inboxData[fbPageId] = inbox.tree
     convsCrawled += inbox.crawled
     partial = partial || inbox.partial
   }
@@ -495,25 +522,48 @@ export async function syncDay(
     syncedAtMs: Date.now(),
     convsCrawled,
     partial,
-    shops: pages.map((p) => ({ id: p.fbPageId, name: p.name })),
+    shops: inputs.map((i) => ({ id: i.page.fbPageId, name: i.page.name })),
     orderData,
     inboxData,
     processedConvIds: [...processed].slice(-4000),
-    warnings,
+    warnings: [...new Set([...warnings, ...inputs.flatMap((i) => i.warnings)])],
   }
 
   await ref.set({ ...doc, updatedAt: FieldValue.serverTimestamp() })
   return doc
 }
 
-/** Sync several days, oldest first. */
+/**
+ * Sync a set of Vietnam calendar days, oldest first. Page data (tags,
+ * conversations, orders) is fetched ONCE for the whole span, so syncing 30
+ * days costs one conversation walk plus one message crawl per day.
+ * `fresh` rebuilds each day from scratch, ignoring earlier syncs.
+ */
 export async function syncDays(
   dates: string[],
   fresh = false
 ): Promise<AgentDayDoc[]> {
+  const sorted = [...new Set(dates)].sort()
+  if (sorted.length === 0) return []
+
+  const pages = pancakePages()
+  const rangeFromMs = vnDayRange(sorted[0]).fromMs
+  const inputs = await Promise.all(
+    pages.map((page) => fetchPageInputs(page, rangeFromMs, sorted.length))
+  )
+
   const out: AgentDayDoc[] = []
-  for (const date of [...dates].sort()) {
-    out.push(await syncDay(date, fresh))
+  for (const date of sorted) {
+    out.push(await buildDay(date, inputs, fresh))
   }
   return out
+}
+
+/** Sync a single Vietnam calendar day. */
+export async function syncDay(
+  dateISO: string,
+  fresh = false
+): Promise<AgentDayDoc> {
+  const [doc] = await syncDays([dateISO], fresh)
+  return doc
 }

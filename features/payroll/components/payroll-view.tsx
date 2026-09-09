@@ -5,6 +5,7 @@ import {
   AlertTriangleIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  DownloadCloudIcon,
   HammerIcon,
   LockIcon,
   UnlockIcon,
@@ -32,6 +33,8 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
+
+import { syncPancakeRange } from "@/features/pancake/services/work-tracking-service"
 
 import {
   buildPeriod,
@@ -70,6 +73,7 @@ export function PayrollView() {
   const [loading, setLoading] = React.useState(true)
   const [denied, setDenied] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
+  const [syncing, setSyncing] = React.useState<string | null>(null)
 
   const [openStaff, setOpenStaff] = React.useState<string | null>(null)
   const [slipOpen, setSlipOpen] = React.useState(false)
@@ -107,6 +111,37 @@ export function PayrollView() {
       if (msg.toLowerCase().includes("forbidden")) setDenied(true)
       toast.error(msg)
     } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Sync Pancake for the whole period, then (re)build the payroll draft. */
+  async function syncAndBuild() {
+    const pad = (n: number) => String(n).padStart(2, "0")
+    const fromISO = `${year}-${pad(month)}-01`
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
+    const todayISO = new Date(Date.now() + 7 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10)
+    const monthEndISO = `${year}-${pad(month)}-${pad(lastDay)}`
+    const toISO = monthEndISO < todayISO ? monthEndISO : todayISO
+
+    setSyncing("Đang đồng bộ Pancake…")
+    setBusy(true)
+    try {
+      await syncPancakeRange(fromISO, toISO, {
+        onProgress: (done, total) =>
+          setSyncing(`Đồng bộ Pancake ${done}/${total} ngày…`),
+      })
+      setSyncing("Đang dựng bảng lương…")
+      await buildPeriod(id)
+      toast.success("Đã đồng bộ và dựng bảng lương")
+    } catch (e) {
+      const msg = (e as Error).message
+      if (msg.toLowerCase().includes("forbidden")) setDenied(true)
+      toast.error(`Lỗi: ${msg}`)
+    } finally {
+      setSyncing(null)
       setBusy(false)
     }
   }
@@ -229,7 +264,16 @@ export function PayrollView() {
               </span>
             ) : null}
 
-            <span className="ml-auto flex gap-2">
+            <span className="ml-auto flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || locked}
+                onClick={syncAndBuild}
+              >
+                <DownloadCloudIcon data-icon="inline-start" />
+                {syncing ?? "Đồng bộ Pancake cả kỳ + dựng"}
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
@@ -243,7 +287,7 @@ export function PayrollView() {
               >
                 <HammerIcon data-icon="inline-start" />
                 {period
-                  ? "Dựng lại"
+                  ? "Dựng lại (không đồng bộ)"
                   : ongoing
                     ? "Dựng thử"
                     : "Dựng bảng lương"}

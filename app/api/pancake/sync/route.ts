@@ -23,15 +23,22 @@ async function authorize(request: Request): Promise<boolean> {
   }
 }
 
+const ISO = /^\d{4}-\d{2}-\d{2}$/
+/** Max days one request will crawl — the client loops for longer spans. */
+const MAX_SPAN = 16
+
 /**
  * Crawls Pancake for one or more Vietnam calendar days and writes the
  * per-staff daily aggregate to `pancakeAgentDaily/{date}`.
  *
- *   POST /api/pancake/sync              -> today
- *   POST /api/pancake/sync?days=7       -> the last 7 days (today back)
+ *   POST /api/pancake/sync                       -> today
+ *   POST /api/pancake/sync?days=7                -> the last 7 days (today back)
  *   POST /api/pancake/sync?date=2026-09-01
+ *   POST /api/pancake/sync?from=2026-08-01&to=2026-08-16
  *
- * Triggered by the client "Đồng bộ ngay" button and by
+ * Page data (tags / conversations / orders) is fetched once for the whole
+ * span, so a multi-day run is one conversation walk plus one crawl per day.
+ * Triggered by the client "Đồng bộ ngay" / "Đồng bộ kỳ" buttons and by
  * `.github/workflows/pancake-sync.yml` on a schedule.
  */
 export async function POST(request: Request) {
@@ -41,13 +48,22 @@ export async function POST(request: Request) {
 
   const url = new URL(request.url)
   const dateParam = url.searchParams.get("date")
+  const fromParam = url.searchParams.get("from")
+  const toParam = url.searchParams.get("to")
   const daysParam = Number(url.searchParams.get("days") ?? "1")
 
   let dates: string[]
-  if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+  if (dateParam && ISO.test(dateParam)) {
     dates = [dateParam]
+  } else if (fromParam && ISO.test(fromParam) && toParam && ISO.test(toParam)) {
+    const [lo, hi] = fromParam <= toParam ? [fromParam, toParam] : [toParam, fromParam]
+    const all = vnDatesInRange(
+      Date.parse(`${lo}T00:00:00+07:00`),
+      Date.parse(`${hi}T00:00:00+07:00`) + 86_400_000
+    )
+    dates = all.slice(0, MAX_SPAN)
   } else {
-    const days = Math.min(Math.max(1, daysParam || 1), 31)
+    const days = Math.min(Math.max(1, daysParam || 1), MAX_SPAN)
     const now = Date.now()
     dates = vnDatesInRange(now - (days - 1) * 86_400_000, now + 1)
   }

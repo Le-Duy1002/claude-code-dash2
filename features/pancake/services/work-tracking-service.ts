@@ -1,5 +1,6 @@
 import { auth } from "@/lib/firebase"
 
+import { vnDatesInRange } from "../types"
 import type {
   DailyLogResponse,
   PageKey,
@@ -118,4 +119,52 @@ export async function triggerPancakeSync(
     throw new Error(body.detail || body.error || `Lỗi ${response.status}`)
   }
   return body
+}
+
+type SyncedDay = { date: string; convsCrawled: number; partial: boolean }
+
+/**
+ * Sync a `YYYY-MM-DD` … `YYYY-MM-DD` span in bounded chunks so a full month
+ * never times out. Page data is fetched once per chunk on the server; the
+ * client just paces the chunks and reports progress.
+ */
+export async function syncPancakeRange(
+  fromISO: string,
+  toISO: string,
+  opts: {
+    chunkDays?: number
+    fresh?: boolean
+    signal?: AbortSignal
+    onProgress?: (done: number, total: number) => void
+  } = {}
+): Promise<{ days: SyncedDay[] }> {
+  const { chunkDays = 12, fresh, signal, onProgress } = opts
+  const [lo, hi] = fromISO <= toISO ? [fromISO, toISO] : [toISO, fromISO]
+  const dates = vnDatesInRange(
+    Date.parse(`${lo}T00:00:00+07:00`),
+    Date.parse(`${hi}T00:00:00+07:00`) + 86_400_000
+  )
+
+  const out: SyncedDay[] = []
+  for (let i = 0; i < dates.length; i += chunkDays) {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError")
+    const chunk = dates.slice(i, i + chunkDays)
+    const q = new URLSearchParams({
+      from: chunk[0],
+      to: chunk[chunk.length - 1],
+    })
+    if (fresh) q.set("fresh", "1")
+    const response = await fetch(`/api/pancake/sync?${q}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${await idToken()}` },
+      signal,
+    })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(body.detail || body.error || `Lỗi ${response.status}`)
+    }
+    out.push(...((body.days ?? []) as SyncedDay[]))
+    onProgress?.(Math.min(i + chunkDays, dates.length), dates.length)
+  }
+  return { days: out }
 }
