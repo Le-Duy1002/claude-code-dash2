@@ -90,6 +90,7 @@ export function PayslipDialog({
   const locked = period.status === "locked"
 
   const [demoRevenue, setDemoRevenue] = React.useState("0")
+  const [demoPct, setDemoPct] = React.useState("")
   const [reportLate, setReportLate] = React.useState("0")
   const [fixedApproved, setFixedApproved] = React.useState(false)
   const [reason, setReason] = React.useState("")
@@ -98,6 +99,7 @@ export function PayslipDialog({
   React.useEffect(() => {
     if (!input) return
     setDemoRevenue(String(input.demoRevenue ?? 0))
+    setDemoPct(input.demoBonusPctManual == null ? "" : String(input.demoBonusPctManual))
     setReportLate(String(input.reportLateCount ?? 0))
     setFixedApproved(Boolean(input.fixedBonusApproved))
     setReason("")
@@ -105,9 +107,11 @@ export function PayslipDialog({
 
   if (!staffKey || !input) return null
 
+  const pctManual = demoPct.trim() === "" ? null : Number(demoPct)
   const draft = {
     ...input,
     demoRevenue: Number(demoRevenue) || 0,
+    demoBonusPctManual: pctManual,
     reportLateCount: Number(reportLate) || 0,
     fixedBonusApproved: fixedApproved,
   }
@@ -116,6 +120,7 @@ export function PayslipDialog({
 
   const dirty =
     draft.demoRevenue !== input.demoRevenue ||
+    draft.demoBonusPctManual !== input.demoBonusPctManual ||
     draft.reportLateCount !== input.reportLateCount ||
     draft.fixedBonusApproved !== input.fixedBonusApproved
 
@@ -127,6 +132,7 @@ export function PayslipDialog({
         staffKey as string,
         {
           demoRevenue: draft.demoRevenue,
+          demoBonusPctManual: draft.demoBonusPctManual,
           reportLateCount: draft.reportLateCount,
           fixedBonusApproved: draft.fixedBonusApproved,
         },
@@ -218,8 +224,25 @@ export function PayslipDialog({
               onChange={(e) => setDemoRevenue(e.target.value)}
             />
           </div>
+          <div className="flex items-center justify-between gap-3 py-1 text-sm">
+            <span className="text-muted-foreground">
+              % thưởng demo{" "}
+              <span className="text-xs">
+                (trống = tự tra theo tỷ lệ chốt {formatPct(input.demoCloseRate)})
+              </span>
+            </span>
+            <Input
+              type="number"
+              inputMode="numeric"
+              placeholder="auto"
+              className="h-7 w-20 text-right"
+              value={demoPct}
+              disabled={locked && !reason.trim()}
+              onChange={(e) => setDemoPct(e.target.value)}
+            />
+          </div>
           <Line
-            label={`Tỷ lệ chốt demo ${formatPct(input.demoCloseRate)} → ${c.demoBonusLabel} (${c.demoBonusPct}%)`}
+            label={`Thưởng demo — ${c.demoBonusLabel} (${c.demoBonusPct}%)`}
             value={formatVnd(c.demoBonus)}
           />
           <div className="flex items-center justify-between gap-3 py-1 text-sm">

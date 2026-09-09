@@ -115,6 +115,8 @@ export type PayrollRowInput = {
   ratingIsExcellent: boolean
   // --- manual
   demoRevenue: number
+  /** override % thưởng demo — null = tự tra theo thang tỷ lệ chốt */
+  demoBonusPctManual: number | null
   reportLateCount: number
   fixedBonusApproved: boolean
 }
@@ -136,6 +138,7 @@ export function emptyRowInput(): PayrollRowInput {
     ratingLabel: "Chưa đủ dữ liệu",
     ratingIsExcellent: false,
     demoRevenue: 0,
+    demoBonusPctManual: null,
     reportLateCount: 0,
     fixedBonusApproved: false,
   }
@@ -143,7 +146,13 @@ export function emptyRowInput(): PayrollRowInput {
 
 /** Fields the manager may edit while a period is a draft. */
 export type PayrollManualPatch = Partial<
-  Pick<PayrollRowInput, "demoRevenue" | "reportLateCount" | "fixedBonusApproved">
+  Pick<
+    PayrollRowInput,
+    | "demoRevenue"
+    | "demoBonusPctManual"
+    | "reportLateCount"
+    | "fixedBonusApproved"
+  >
 >
 
 export type PayrollPeriod = {
@@ -249,8 +258,15 @@ export function computeRow(
     : 0
   if (!input.hasSchedule) pending.push("Giờ công — chưa có lịch chốt cho kỳ")
 
-  const demo = demoBonusBand(ONE(input.demoCloseRate, 0), p.demoBands)
-  if (input.demoCloseRate == null) pending.push("Tỷ lệ chốt qua demo")
+  const band = demoBonusBand(ONE(input.demoCloseRate, 0), p.demoBands)
+  const manualPct = input.demoBonusPctManual
+  const demo =
+    manualPct == null
+      ? band
+      : { pct: manualPct, label: `nhập tay ${manualPct}%` }
+  if (input.demoCloseRate == null && manualPct == null) {
+    pending.push("Tỷ lệ chốt qua demo")
+  }
   const demoBonus = Math.round((input.demoRevenue || 0) * (demo.pct / 100))
   const fixedBonus = input.fixedBonusApproved ? p.fixedBonus : 0
   const grossBeforeDeduction = pay + demoBonus + fixedBonus

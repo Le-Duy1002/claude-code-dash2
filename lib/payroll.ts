@@ -236,6 +236,7 @@ export async function buildPayrollPeriod(
     row.ratingLabel = rating
     row.ratingIsExcellent = rating === "Xuất sắc"
     row.demoRevenue = prev?.demoRevenue ?? 0
+    row.demoBonusPctManual = prev?.demoBonusPctManual ?? null
     row.reportLateCount = prev?.reportLateCount ?? 0
     row.fixedBonusApproved = prev?.fixedBonusApproved ?? false
     rows[member.key] = row
@@ -309,6 +310,17 @@ export async function savePayrollManual(
     if (patch.demoRevenue < 0) throw new PayrollError("Doanh thu không hợp lệ")
     updates[`rows.${staffKey}.demoRevenue`] = Math.round(patch.demoRevenue)
     parts.push(`doanh thu demo = ${Math.round(patch.demoRevenue).toLocaleString("vi-VN")}`)
+  }
+  if ("demoBonusPctManual" in patch) {
+    const v = patch.demoBonusPctManual
+    if (v == null) {
+      updates[`rows.${staffKey}.demoBonusPctManual`] = null
+      parts.push("% thưởng demo = tự động theo thang")
+    } else {
+      if (v < 0 || v > 100) throw new PayrollError("% thưởng không hợp lệ")
+      updates[`rows.${staffKey}.demoBonusPctManual`] = v
+      parts.push(`% thưởng demo (nhập tay) = ${v}%`)
+    }
   }
   if (typeof patch.reportLateCount === "number") {
     if (patch.reportLateCount < 0 || !Number.isInteger(patch.reportLateCount)) {
