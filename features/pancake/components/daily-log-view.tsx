@@ -31,6 +31,7 @@ import {
   autoSyncedRecently,
   fetchDailyLog,
   markAutoSynced,
+  syncPancakeRange,
   triggerPancakeSync,
 } from "../services/work-tracking-service"
 import { STAFF } from "../staff"
@@ -303,15 +304,39 @@ export function DailyLogView() {
   const runSync = React.useCallback(
     async (auto = false) => {
       setSyncing(true)
+      const vnISO = (ms: number) =>
+        new Date(ms + 7 * 3_600_000).toISOString().slice(0, 10)
+
+      if (auto) {
+        const id = toast.loading("Đang đồng bộ dữ liệu hôm nay từ Pancake…")
+        try {
+          await triggerPancakeSync(1)
+          toast.success("Đã đồng bộ dữ liệu hôm nay", { id })
+          load()
+        } catch (cause) {
+          toast.error(`Đồng bộ lỗi: ${(cause as Error).message}`, { id })
+        } finally {
+          setSyncing(false)
+        }
+        return
+      }
+
+      const now = Date.now()
+      const fromISO = vnISO(data?.fromMs ?? now - 6 * 86_400_000)
+      const toISO = vnISO(Math.min(data?.toMs ?? now, now) - 1)
       const id = toast.loading(
-        auto
-          ? "Đang đồng bộ dữ liệu hôm nay từ Pancake…"
-          : "Đang đồng bộ hôm nay từ Pancake… (quét hội thoại, có thể vài phút)"
+        `Đang đồng bộ ${fromISO} → ${toISO} từ Pancake… (quét hội thoại, có thể vài phút)`
       )
       try {
-        const result = await triggerPancakeSync(1)
+        const result = await syncPancakeRange(fromISO, toISO, {
+          onProgress: (done, total) =>
+            toast.loading(`Đồng bộ Pancake — ${done}/${total} ngày…`, { id }),
+        })
         const crawled = result.days.reduce((s, d) => s + d.convsCrawled, 0)
-        toast.success(`Đồng bộ xong · ${crawled} hội thoại`, { id })
+        toast.success(
+          `Đồng bộ xong ${result.days.length} ngày · ${crawled} hội thoại`,
+          { id }
+        )
         load()
       } catch (cause) {
         toast.error(`Đồng bộ lỗi: ${(cause as Error).message}`, { id })
@@ -319,7 +344,7 @@ export function DailyLogView() {
         setSyncing(false)
       }
     },
-    [load]
+    [data, load]
   )
 
   // auto-sync today once on open (5-min cooldown shared with the scorecard view)

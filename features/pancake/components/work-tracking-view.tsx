@@ -39,6 +39,7 @@ import {
   autoSyncedRecently,
   fetchWorkTracking,
   markAutoSynced,
+  syncPancakeRange,
   triggerPancakeSync,
 } from "../services/work-tracking-service"
 import {
@@ -546,18 +547,38 @@ export function WorkTrackingView() {
   React.useEffect(() => load(), [load])
 
   const runSync = React.useCallback(
-    async (opts?: { days?: number; auto?: boolean }) => {
-      const days =
-        opts?.days ??
-        (report ? Math.min(14, Math.max(1, report.missingDays.length)) : 1)
+    async (opts?: { auto?: boolean }) => {
       setSyncing(true)
+      const vnISO = (ms: number) =>
+        new Date(ms + 7 * 3_600_000).toISOString().slice(0, 10)
+
+      // page-open auto-sync: just refresh today's data (cheap)
+      if (opts?.auto) {
+        const id = toast.loading("Đang đồng bộ dữ liệu hôm nay từ Pancake…")
+        try {
+          await triggerPancakeSync(1)
+          toast.success("Đã đồng bộ dữ liệu hôm nay", { id })
+          load()
+        } catch (cause) {
+          toast.error(`Đồng bộ lỗi: ${(cause as Error).message}`, { id })
+        } finally {
+          setSyncing(false)
+        }
+        return
+      }
+
+      // manual "Đồng bộ ngay": crawl the whole selected date range, in chunks
+      const now = Date.now()
+      const fromISO = vnISO(report?.fromMs ?? now - 6 * 86_400_000)
+      const toISO = vnISO(Math.min(report?.toMs ?? now, now) - 1)
       const id = toast.loading(
-        opts?.auto
-          ? "Đang đồng bộ dữ liệu hôm nay từ Pancake…"
-          : `Đang đồng bộ ${days} ngày từ Pancake… (quét toàn bộ hội thoại, có thể vài phút)`
+        `Đang đồng bộ ${fromISO} → ${toISO} từ Pancake… (quét toàn bộ hội thoại, có thể vài phút)`
       )
       try {
-        const result = await triggerPancakeSync(days)
+        const result = await syncPancakeRange(fromISO, toISO, {
+          onProgress: (done, total) =>
+            toast.loading(`Đồng bộ Pancake — ${done}/${total} ngày…`, { id }),
+        })
         const crawled = result.days.reduce((s, d) => s + d.convsCrawled, 0)
         toast.success(
           `Đồng bộ xong ${result.days.length} ngày · ${crawled} hội thoại`,
@@ -581,7 +602,7 @@ export function WorkTrackingView() {
     autoSyncTried.current = true
     if (!autoSyncedRecently()) {
       markAutoSynced()
-      void runSync({ days: 1, auto: true })
+      void runSync({ auto: true })
     }
   }, [user, runSync])
 
