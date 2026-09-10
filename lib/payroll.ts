@@ -50,7 +50,7 @@ export class PayrollError extends Error {
 
 const ADMIN_EMAILS = (
   process.env.PAYROLL_ADMIN_EMAILS ||
-  "hoangthang0m@gmail.com,nangluongvutru999@gmail.com"
+  "hoangthang0m@gmail.com,nangluongvutru999@gmail.com,anhviettran0501@gmail.com"
 )
   .split(",")
   .map((s) => s.trim().toLowerCase())
