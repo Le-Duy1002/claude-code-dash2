@@ -31,7 +31,7 @@ import {
   type TaskStatus,
 } from "../types"
 
-const COLUMNS: TaskStatus[] = ["todo", "in_progress", "done"]
+const COLUMNS: TaskStatus[] = ["todo", "in_progress", "done", "failed"]
 
 const TONE_CLASS = {
   positive: "text-emerald-600 dark:text-emerald-400",
@@ -103,7 +103,7 @@ function Card({
         <Badge variant={TASK_PRIORITY_BADGE[task.priority]}>
           {TASK_PRIORITY_LABELS[task.priority]}
         </Badge>
-        {task.status !== "done" && task.endDate ? (
+        {task.status !== "done" && task.status !== "failed" && task.endDate ? (
           <span className={cn("tabular-nums", TONE_CLASS[remaining.tone])}>
             {remaining.label}
           </span>
@@ -191,6 +191,7 @@ export function ProjectKanban({
       todo: [],
       in_progress: [],
       done: [],
+      failed: [],
     }
     for (const t of tasks) map[statusOf(t)].push(t)
     return map

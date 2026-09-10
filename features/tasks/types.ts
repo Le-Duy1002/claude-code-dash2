@@ -1,4 +1,4 @@
-export type TaskStatus = "todo" | "in_progress" | "done"
+export type TaskStatus = "todo" | "in_progress" | "done" | "failed"
 
 export type TaskPriority = "low" | "medium" | "high"
 
@@ -86,6 +86,7 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   todo: "Chưa bắt đầu",
   in_progress: "Đang thực hiện",
   done: "Hoàn thành",
+  failed: "Không hoàn thành",
 }
 
 export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
@@ -102,14 +103,19 @@ export const TASK_PRIORITY_OPTIONS = (
   Object.keys(TASK_PRIORITY_LABELS) as TaskPriority[]
 ).map((value) => ({ value, label: TASK_PRIORITY_LABELS[value] }))
 
-/** Badge styling per status / priority, keyed to the shared `Badge` variants. */
-export const TASK_STATUS_BADGE: Record<
-  TaskStatus,
-  "default" | "secondary" | "outline"
-> = {
-  todo: "outline",
-  in_progress: "secondary",
-  done: "default",
+/**
+ * Badge colour per status, as a Tailwind class string — pair with
+ * `variant="outline"` on `<Badge>` so this overrides the background/text.
+ * Chưa bắt đầu = vàng, Đang thực hiện = xanh lam, Hoàn thành = xanh lá,
+ * Không hoàn thành = đỏ.
+ */
+export const TASK_STATUS_BADGE: Record<TaskStatus, string> = {
+  todo: "bg-amber-500/15 text-amber-700 border-amber-500/30 dark:text-amber-400",
+  in_progress:
+    "bg-blue-500/15 text-blue-700 border-blue-500/30 dark:text-blue-400",
+  done: "bg-emerald-500/15 text-emerald-700 border-emerald-500/30 dark:text-emerald-400",
+  failed:
+    "bg-red-500/15 text-red-700 border-red-500/30 dark:text-red-400",
 }
 
 export const TASK_PRIORITY_BADGE: Record<
@@ -126,6 +132,7 @@ export const TASK_STATUS_ORDER: Record<TaskStatus, number> = {
   todo: 0,
   in_progress: 1,
   done: 2,
+  failed: 3,
 }
 
 export const TASK_PRIORITY_ORDER: Record<TaskPriority, number> = {
@@ -159,6 +166,7 @@ export function describeRemaining(
 ): { label: string; tone: RemainingTone } {
   if (!task.endDate) return { label: "—", tone: "muted" }
   if (task.status === "done") return { label: "Đã hoàn thành", tone: "positive" }
+  if (task.status === "failed") return { label: "Không hoàn thành", tone: "negative" }
 
   const days = daysUntil(task.endDate)
   if (days > 0) return { label: `Còn ${days} ngày`, tone: "positive" }

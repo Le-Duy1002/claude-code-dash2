@@ -8,9 +8,17 @@ import {
   MessageSquareIcon,
   PencilIcon,
 } from "lucide-react"
+import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -22,13 +30,16 @@ import {
 import { cn } from "@/lib/utils"
 import { DeleteTaskDialog } from "@/features/tasks"
 
-import { deleteProjectTask } from "../services/project-tasks-service"
+import { deleteProjectTask, updateProjectTask } from "../services/project-tasks-service"
 import {
+  PROJECT_STAFF,
   TASK_PRIORITY_BADGE,
   TASK_PRIORITY_LABELS,
+  TASK_PRIORITY_OPTIONS,
   TASK_PRIORITY_ORDER,
   TASK_STATUS_BADGE,
   TASK_STATUS_LABELS,
+  TASK_STATUS_OPTIONS,
   TASK_STATUS_ORDER,
   daysUntil,
   describeRemaining,
@@ -36,7 +47,145 @@ import {
   staffName,
   type ProjectTask,
   type RemainingTone,
+  type TaskPriority,
+  type TaskStatus,
 } from "../types"
+
+const ASSIGNEE_ITEMS = PROJECT_STAFF.map((s) => ({ value: s.key, label: s.name }))
+
+function StatusCell({ task }: { task: ProjectTask }) {
+  async function change(value: string | null) {
+    if (!value || value === task.status) return
+    try {
+      await updateProjectTask(task.id, { status: value as TaskStatus })
+    } catch (e) {
+      toast.error(`Lỗi đổi trạng thái: ${(e as Error).message}`)
+    }
+  }
+  return (
+    <Select items={TASK_STATUS_OPTIONS} value={task.status} onValueChange={change}>
+      <SelectTrigger
+        className={cn(
+          "h-6 w-fit gap-1 rounded-4xl border px-2 py-0 text-xs font-medium [&_svg]:size-3",
+          TASK_STATUS_BADGE[task.status]
+        )}
+      >
+        {TASK_STATUS_LABELS[task.status]}
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          {TASK_STATUS_OPTIONS.map((o) => (
+            <SelectItem key={o.value} value={o.value}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  )
+}
+
+function PriorityCell({ task }: { task: ProjectTask }) {
+  async function change(value: string | null) {
+    if (!value || value === task.priority) return
+    try {
+      await updateProjectTask(task.id, { priority: value as TaskPriority })
+    } catch (e) {
+      toast.error(`Lỗi đổi ưu tiên: ${(e as Error).message}`)
+    }
+  }
+  return (
+    <Select items={TASK_PRIORITY_OPTIONS} value={task.priority} onValueChange={change}>
+      <SelectTrigger className="h-auto w-fit gap-1 border-0 bg-transparent p-0 shadow-none hover:opacity-80 [&_svg]:hidden">
+        <Badge variant={TASK_PRIORITY_BADGE[task.priority]}>
+          {TASK_PRIORITY_LABELS[task.priority]}
+        </Badge>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          {TASK_PRIORITY_OPTIONS.map((o) => (
+            <SelectItem key={o.value} value={o.value}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  )
+}
+
+function AssigneeCell({ task }: { task: ProjectTask }) {
+  async function change(value: string | null) {
+    if (!value || value === task.assigneeKey) return
+    try {
+      await updateProjectTask(task.id, { assigneeKey: value })
+    } catch (e) {
+      toast.error(`Lỗi đổi người đảm nhiệm: ${(e as Error).message}`)
+    }
+  }
+  return (
+    <Select items={ASSIGNEE_ITEMS} value={task.assigneeKey} onValueChange={change}>
+      <SelectTrigger className="h-7 w-fit gap-1 border-0 bg-transparent px-1.5 py-0.5 text-sm shadow-none hover:bg-muted [&_svg]:size-3.5">
+        {staffName(task.assigneeKey)}
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          {ASSIGNEE_ITEMS.map((o) => (
+            <SelectItem key={o.value} value={o.value}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  )
+}
+
+function DateCell({
+  value,
+  onSave,
+}: {
+  value: string
+  onSave: (next: string) => Promise<void>
+}) {
+  const [editing, setEditing] = React.useState(false)
+
+  async function save(next: string) {
+    setEditing(false)
+    if (!next || next === value) return
+    try {
+      await onSave(next)
+    } catch (e) {
+      toast.error(`Lỗi đổi ngày: ${(e as Error).message}`)
+    }
+  }
+
+  if (editing) {
+    return (
+      <input
+        type="date"
+        autoFocus
+        defaultValue={value}
+        onBlur={(e) => void save(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setEditing(false)
+          if (e.key === "Enter") void save((e.target as HTMLInputElement).value)
+        }}
+        className="h-7 rounded-md border border-input bg-transparent px-1.5 text-sm text-foreground outline-none focus-visible:border-ring"
+      />
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      className="-mx-1.5 rounded-md px-1.5 py-0.5 whitespace-nowrap hover:bg-muted"
+      title="Bấm để đổi ngày"
+    >
+      {formatDate(value)}
+    </button>
+  )
+}
 
 type SortKey =
   | "title"
@@ -187,22 +336,26 @@ export function ProjectTaskTable({
               return (
                 <TableRow key={task.id}>
                   <TableCell className="font-medium">{task.title}</TableCell>
-                  <TableCell>{staffName(task.assigneeKey)}</TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    {formatDate(task.startDate)}
+                  <TableCell>
+                    <AssigneeCell task={task} />
                   </TableCell>
                   <TableCell className="whitespace-nowrap">
-                    {formatDate(task.endDate)}
+                    <DateCell
+                      value={task.startDate}
+                      onSave={(v) => updateProjectTask(task.id, { startDate: v })}
+                    />
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    <DateCell
+                      value={task.endDate}
+                      onSave={(v) => updateProjectTask(task.id, { endDate: v })}
+                    />
                   </TableCell>
                   <TableCell>
-                    <Badge variant={TASK_STATUS_BADGE[task.status]}>
-                      {TASK_STATUS_LABELS[task.status]}
-                    </Badge>
+                    <StatusCell task={task} />
                   </TableCell>
                   <TableCell>
-                    <Badge variant={TASK_PRIORITY_BADGE[task.priority]}>
-                      {TASK_PRIORITY_LABELS[task.priority]}
-                    </Badge>
+                    <PriorityCell task={task} />
                   </TableCell>
                   <TableCell
                     className={cn(

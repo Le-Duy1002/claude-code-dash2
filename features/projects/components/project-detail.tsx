@@ -343,7 +343,11 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             {visible.length}/{tasks.length} công việc
             {(() => {
               const late = tasks.filter(
-                (t) => t.status !== "done" && t.endDate && daysUntil(t.endDate) < 0
+                (t) =>
+                  t.status !== "done" &&
+                  t.status !== "failed" &&
+                  t.endDate &&
+                  daysUntil(t.endDate) < 0
               ).length
               return late > 0 ? ` · ${late} việc quá hạn` : ""
             })()}

@@ -195,7 +195,7 @@ export function TasksTable({
                   <TableCell>{formatDate(task.startDate)}</TableCell>
                   <TableCell>{formatDate(task.endDate)}</TableCell>
                   <TableCell>
-                    <Badge variant={TASK_STATUS_BADGE[task.status]}>
+                    <Badge variant="outline" className={TASK_STATUS_BADGE[task.status]}>
                       {TASK_STATUS_LABELS[task.status]}
                     </Badge>
                   </TableCell>
