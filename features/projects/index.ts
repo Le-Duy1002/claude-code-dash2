@@ -21,6 +21,7 @@ export {
   subscribeToProjectTaskComments,
 } from "./services/project-comments-service"
 export {
+  createProjectItem,
   deleteProjectDocument,
   renameProjectDocument,
   subscribeToProjectDocuments,

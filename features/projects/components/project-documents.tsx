@@ -10,6 +10,7 @@ import {
   FileSpreadsheetIcon,
   FileTextIcon,
   FolderIcon,
+  FolderPlusIcon,
   PresentationIcon,
   RefreshCwIcon,
   Trash2Icon,
@@ -30,6 +31,15 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import {
   documentKind,
@@ -39,12 +49,113 @@ import {
 } from "@/features/documents/types"
 
 import {
+  createProjectItem,
   deleteProjectDocument,
   subscribeToProjectDocuments,
   syncProjectDocuments,
   uploadProjectDocument,
   type ProjectDocItem,
 } from "../services/project-documents-service"
+
+type CreateTarget = { parentId: string; parentName: string }
+
+function CreateItemDialog({
+  projectId,
+  target,
+  onOpenChange,
+}: {
+  projectId: string
+  target: CreateTarget | null
+  onOpenChange: (open: boolean) => void
+}) {
+  const [kind, setKind] = React.useState<"folder" | "file">("folder")
+  const [name, setName] = React.useState("")
+  const [busy, setBusy] = React.useState(false)
+
+  React.useEffect(() => {
+    if (target) {
+      setKind("folder")
+      setName("")
+    }
+  }, [target])
+
+  async function submit() {
+    if (!target || !name.trim()) return
+    setBusy(true)
+    try {
+      await createProjectItem(projectId, {
+        parentId: target.parentId,
+        name: name.trim(),
+        isFolder: kind === "folder",
+      })
+      toast.success(kind === "folder" ? "Đã tạo thư mục." : "Đã tạo tệp.")
+      onOpenChange(false)
+    } catch (e) {
+      toast.error(`Lỗi: ${(e as Error).message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={Boolean(target)} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Tạo mới trong “{target?.parentName}”</DialogTitle>
+          <DialogDescription>
+            Chọn thư mục hoặc tệp, đặt tên rồi tạo — nằm ngay trong{" "}
+            {target?.parentName}.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex gap-1 rounded-md border p-0.5">
+          <Button
+            type="button"
+            size="sm"
+            variant={kind === "folder" ? "secondary" : "ghost"}
+            className="flex-1"
+            onClick={() => setKind("folder")}
+          >
+            <FolderIcon data-icon="inline-start" />
+            Thư mục
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={kind === "file" ? "secondary" : "ghost"}
+            className="flex-1"
+            onClick={() => setKind("file")}
+          >
+            <FileIcon data-icon="inline-start" />
+            Tệp
+          </Button>
+        </div>
+        <Input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={kind === "folder" ? "Tên thư mục" : "Tên tệp, vd: ke-hoach.txt"}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void submit()
+          }}
+        />
+        {kind === "file" ? (
+          <p className="text-xs text-muted-foreground">
+            Tạo một tệp văn bản trống với tên bạn đặt — mở trên Drive để soạn
+            nội dung.
+          </p>
+        ) : null}
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Huỷ
+          </Button>
+          <Button disabled={busy || !name.trim()} onClick={() => void submit()}>
+            {busy ? "Đang tạo…" : "Tạo"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 const KIND_ICON: Record<DocumentKind, React.ElementType> = {
   image: FileImageIcon,
@@ -67,11 +178,13 @@ function TreeNode({
   childrenOf,
   depth,
   projectId,
+  onCreateHere,
 }: {
   item: ProjectDocItem
   childrenOf: Map<string, ProjectDocItem[]>
   depth: number
   projectId: string
+  onCreateHere: (target: CreateTarget) => void
 }) {
   const [open, setOpen] = React.useState(depth === 0)
   const kids = (childrenOf.get(item.id) ?? []).slice().sort(sortItems)
@@ -81,7 +194,7 @@ function TreeNode({
     return (
       <>
         <div
-          className="flex items-center gap-1 py-1.5 text-sm"
+          className="group/folder flex items-center gap-1 py-1.5 text-sm"
           style={pad}
         >
           <button
@@ -101,6 +214,16 @@ function TreeNode({
           <span className="text-xs text-muted-foreground">
             ({kids.length})
           </span>
+          <button
+            type="button"
+            onClick={() =>
+              onCreateHere({ parentId: item.id, parentName: item.name })
+            }
+            className="text-muted-foreground opacity-0 hover:text-foreground group-hover/folder:opacity-100"
+            title="Tạo thư mục con / tệp trong đây"
+          >
+            <FolderPlusIcon className="size-3.5" />
+          </button>
           <a
             href={item.webViewLink}
             target="_blank"
@@ -119,6 +242,7 @@ function TreeNode({
                 childrenOf={childrenOf}
                 depth={depth + 1}
                 projectId={projectId}
+                onCreateHere={onCreateHere}
               />
             ))
           : null}
@@ -201,6 +325,9 @@ export function ProjectDocuments({
   const [loading, setLoading] = React.useState(true)
   const [uploading, setUploading] = React.useState(false)
   const [syncing, setSyncing] = React.useState(false)
+  const [createTarget, setCreateTarget] = React.useState<CreateTarget | null>(
+    null
+  )
   const inputRef = React.useRef<HTMLInputElement>(null)
 
   React.useEffect(() => {
@@ -300,6 +427,16 @@ export function ProjectDocuments({
           </Button>
           <Button
             size="sm"
+            variant="outline"
+            onClick={() =>
+              setCreateTarget({ parentId: "", parentName: "thư mục gốc dự án" })
+            }
+          >
+            <FolderPlusIcon data-icon="inline-start" />
+            Tạo mới
+          </Button>
+          <Button
+            size="sm"
             disabled={uploading}
             onClick={() => inputRef.current?.click()}
           >
@@ -322,8 +459,8 @@ export function ProjectDocuments({
         </p>
       ) : roots.length === 0 ? (
         <p className="py-4 text-center text-sm text-muted-foreground">
-          Chưa có tài liệu. Bấm “Tải lên”, hoặc thả tệp / thư mục vào thư mục
-          Drive của dự án rồi bấm “Đồng bộ Drive”.
+          Chưa có tài liệu. Bấm “Tạo mới” hoặc “Tải lên”, hoặc thả tệp / thư
+          mục vào thư mục Drive của dự án rồi bấm “Đồng bộ Drive”.
         </p>
       ) : (
         <div className="divide-y">
@@ -334,14 +471,20 @@ export function ProjectDocuments({
               childrenOf={childrenOf}
               depth={0}
               projectId={projectId}
+              onCreateHere={setCreateTarget}
             />
           ))}
         </div>
       )}
       <p className="text-xs text-muted-foreground">
-        Tệp tải lên qua nút “Tải lên” nằm ở thư mục gốc của dự án. Muốn xếp vào
-        thư mục con thì kéo trên Drive rồi bấm “Đồng bộ Drive”.
+        “Tạo mới” đặt tên và tạo thư mục / tệp ngay trên web, ở đúng nơi bạn
+        chọn. Trỏ chuột vào một thư mục để tạo bên trong nó.
       </p>
+      <CreateItemDialog
+        projectId={projectId}
+        target={createTarget}
+        onOpenChange={(open) => !open && setCreateTarget(null)}
+      />
     </div>
   )
 }

@@ -106,19 +106,22 @@ function projectsWriteClient() {
 export const PROJECTS_PARENT_FOLDER_ID =
   process.env.GOOGLE_DRIVE_PROJECTS_FOLDER_ID ?? ""
 
-/** Creates a subfolder for one project inside the "Dự án" parent folder. */
-export async function createProjectFolder(
+/**
+ * Creates a folder under `parentId` — a folder this app's projects OAuth
+ * identity already owns (the projects parent folder, a project's root folder,
+ * or a subfolder created the same way). `drive.file` scope only allows writing
+ * into folders the identity created, so `parentId` must trace back to one.
+ */
+export async function createProjectSubfolder(
+  parentId: string,
   name: string
 ): Promise<{ id: string; webViewLink: string }> {
-  if (!PROJECTS_PARENT_FOLDER_ID) {
-    throw new Error("GOOGLE_DRIVE_PROJECTS_FOLDER_ID chưa cấu hình")
-  }
   const drive = projectsWriteClient()
   const res = await drive.files.create({
     requestBody: {
       name,
       mimeType: "application/vnd.google-apps.folder",
-      parents: [PROJECTS_PARENT_FOLDER_ID],
+      parents: [parentId],
     },
     fields: "id, webViewLink",
   })
@@ -126,6 +129,16 @@ export async function createProjectFolder(
     id: res.data.id ?? "",
     webViewLink: res.data.webViewLink ?? "",
   }
+}
+
+/** Creates a subfolder for one project inside the "Dự án" parent folder. */
+export async function createProjectFolder(
+  name: string
+): Promise<{ id: string; webViewLink: string }> {
+  if (!PROJECTS_PARENT_FOLDER_ID) {
+    throw new Error("GOOGLE_DRIVE_PROJECTS_FOLDER_ID chưa cấu hình")
+  }
+  return createProjectSubfolder(PROJECTS_PARENT_FOLDER_ID, name)
 }
 
 /** Renames a project folder (e.g. when the project is renamed). */

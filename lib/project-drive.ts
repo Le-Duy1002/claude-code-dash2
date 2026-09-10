@@ -7,9 +7,11 @@ import { FieldValue } from "firebase-admin/firestore"
 import { adminDb } from "./firebase-admin"
 import {
   createProjectFolder,
+  createProjectSubfolder,
   getChangesStartPageToken,
   listFolderTree,
   stopChannel,
+  uploadFileToProjectFolder,
   watchChanges,
 } from "./google-drive"
 
@@ -59,6 +61,73 @@ export async function ensureProjectDriveFolder(
   // watch (no-op locally / until PROJECT_DRIVE_WEBHOOK_URL is set)
   registerDriveWatch().catch(() => {})
   return { id: folder.id, url: folder.webViewLink, name: displayName }
+}
+
+/**
+ * Creates a subfolder or an empty named file inside a project's Drive folder
+ * (directly at the root, or under an existing subfolder via `parentId`), and
+ * records the mirror doc. Used by the "Tạo thư mục" / "Tạo tệp" actions on the
+ * documents tree, so a project's structure can be built entirely from the web.
+ */
+export async function createProjectItem(
+  projectId: string,
+  input: { parentId: string; name: string; isFolder: boolean },
+  actorName: string
+): Promise<{ id: string }> {
+  const name = input.name.trim()
+  if (!name) throw new HttpError("Tên không được để trống", 400)
+  if (name.length > 200) throw new HttpError("Tên quá dài", 400)
+
+  const folder = await ensureProjectDriveFolder(projectId)
+  const driveParentId = input.parentId || folder.id
+  const collection = adminDb()
+    .collection("projects")
+    .doc(projectId)
+    .collection("documents")
+
+  if (input.isFolder) {
+    const created = await createProjectSubfolder(driveParentId, name)
+    if (!created.id) throw new HttpError("Không tạo được thư mục trên Drive", 502)
+    await collection.doc(created.id).set({
+      name,
+      fileName: name,
+      size: 0,
+      contentType: "application/vnd.google-apps.folder",
+      driveFileId: created.id,
+      webViewLink: created.webViewLink,
+      driveModifiedTime: new Date().toISOString(),
+      parentId: input.parentId,
+      isFolder: true,
+      uploadedByName: actorName,
+      source: "web",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+    return { id: created.id }
+  }
+
+  const drive = await uploadFileToProjectFolder({
+    folderId: driveParentId,
+    name,
+    mimeType: "text/plain",
+    buffer: Buffer.from(""),
+  })
+  await collection.doc(drive.id).set({
+    name: drive.name,
+    fileName: drive.name,
+    size: drive.size,
+    contentType: drive.mimeType,
+    driveFileId: drive.id,
+    webViewLink: drive.webViewLink,
+    driveModifiedTime: drive.modifiedTime,
+    parentId: input.parentId,
+    isFolder: false,
+    uploadedByName: actorName,
+    source: "web",
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  })
+  return { id: drive.id }
 }
 
 export type SyncResult = {

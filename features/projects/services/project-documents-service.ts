@@ -67,10 +67,12 @@ async function idToken(): Promise<string> {
 
 export async function uploadProjectDocument(
   projectId: string,
-  file: File
+  file: File,
+  parentId = ""
 ): Promise<void> {
   const form = new FormData()
   form.append("file", file)
+  if (parentId) form.append("parentId", parentId)
   const response = await fetch(`/api/projects/${projectId}/documents`, {
     method: "POST",
     headers: { Authorization: `Bearer ${await idToken()}` },
@@ -81,6 +83,29 @@ export async function uploadProjectDocument(
       "Tệp vượt giới hạn (~4 MB). Tải trực tiếp lên thư mục Drive của dự án rồi bấm Đồng bộ."
     )
   }
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new Error(body.detail || body.error || `Lỗi ${response.status}`)
+  }
+}
+
+/** Creates a subfolder or an empty named file inside the project's Drive tree. */
+export async function createProjectItem(
+  projectId: string,
+  params: { parentId?: string; name: string; isFolder: boolean }
+): Promise<void> {
+  const response = await fetch(`/api/projects/${projectId}/documents/create`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${await idToken()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      parentId: params.parentId ?? "",
+      name: params.name,
+      isFolder: params.isFolder,
+    }),
+  })
   const body = await response.json().catch(() => ({}))
   if (!response.ok) {
     throw new Error(body.detail || body.error || `Lỗi ${response.status}`)

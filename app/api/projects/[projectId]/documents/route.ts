@@ -31,6 +31,10 @@ export async function POST(
   if (file.size > MAX_BYTES) {
     return NextResponse.json({ error: "file_too_large" }, { status: 413 })
   }
+  // Drive folder id of the target subfolder, relative to the project root
+  // ("" = the project's root folder itself).
+  const rawParentId = form.get("parentId")
+  const parentId = typeof rawParentId === "string" ? rawParentId : ""
 
   let folder
   try {
@@ -45,7 +49,7 @@ export async function POST(
   let drive
   try {
     drive = await uploadFileToProjectFolder({
-      folderId: folder.id,
+      folderId: parentId || folder.id,
       name: file.name,
       mimeType: file.type || "application/octet-stream",
       buffer,
@@ -70,7 +74,7 @@ export async function POST(
       driveFileId: drive.id,
       webViewLink: drive.webViewLink,
       driveModifiedTime: drive.modifiedTime,
-      parentId: "",
+      parentId,
       isFolder: false,
       uploadedByName: user.name || user.email || "Người dùng",
       source: "web",
