@@ -247,7 +247,7 @@ export async function buildPayrollPeriod(
     warnings.push(
       `Chưa đồng bộ ${missingDays.length} ngày trong kỳ (${missingDays
         .slice(0, 5)
-        .join(", ")}${missingDays.length > 5 ? "…" : ""}). Vào “Theo dõi công việc” bấm “Đồng bộ ngay”.`
+        .join(", ")}${missingDays.length > 5 ? "…" : ""}). Vào “Thống kê công việc” bấm “Đồng bộ ngay”.`
     )
   }
   if (partial) {

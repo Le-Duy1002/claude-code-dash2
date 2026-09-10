@@ -17,7 +17,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { LayoutDashboardIcon, ListIcon, ChartBarIcon, FolderIcon, FolderOpenIcon, UsersIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, FileChartColumnIcon, FileIcon, ClipboardListIcon, GaugeIcon, CalendarClockIcon, CalendarDaysIcon, BanknoteIcon } from "lucide-react"
+import { LayoutDashboardIcon, FolderIcon, FolderOpenIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, ClipboardListIcon, GaugeIcon, CalendarClockIcon, CalendarDaysIcon, BanknoteIcon } from "lucide-react"
 
 const data = {
   user: {
@@ -31,14 +31,6 @@ const data = {
       url: "/",
       icon: (
         <LayoutDashboardIcon
-        />
-      ),
-    },
-    {
-      title: "Bảng điều khiển",
-      url: "/dashboard",
-      icon: (
-        <ChartBarIcon
         />
       ),
     },
@@ -59,7 +51,7 @@ const data = {
       ),
     },
     {
-      title: "Theo dõi công việc",
+      title: "Thống kê công việc",
       url: "/theo-doi-cong-viec",
       icon: (
         <GaugeIcon
@@ -67,7 +59,7 @@ const data = {
       ),
     },
     {
-      title: "Nhật ký AI theo ngày",
+      title: "Chi tiết thang đo",
       url: "/nhat-ky-ai",
       icon: (
         <CalendarClockIcon
@@ -91,34 +83,10 @@ const data = {
       ),
     },
     {
-      title: "Vòng đời",
-      url: "#",
-      icon: (
-        <ListIcon
-        />
-      ),
-    },
-    {
-      title: "Phân tích",
-      url: "#",
-      icon: (
-        <ChartBarIcon
-        />
-      ),
-    },
-    {
       title: "Dự án",
       url: "/du-an",
       icon: (
         <FolderIcon
-        />
-      ),
-    },
-    {
-      title: "Nhóm",
-      url: "#",
-      icon: (
-        <UsersIcon
         />
       ),
     },
@@ -212,22 +180,6 @@ const data = {
       url: "#",
       icon: (
         <DatabaseIcon
-        />
-      ),
-    },
-    {
-      name: "Báo cáo",
-      url: "#",
-      icon: (
-        <FileChartColumnIcon
-        />
-      ),
-    },
-    {
-      name: "Trợ lý Word",
-      url: "#",
-      icon: (
-        <FileIcon
         />
       ),
     },

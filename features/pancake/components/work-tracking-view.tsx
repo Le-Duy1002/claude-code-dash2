@@ -500,7 +500,7 @@ export function WorkTrackingView() {
     <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="font-heading text-lg font-medium">Theo dõi công việc</h1>
+          <h1 className="font-heading text-lg font-medium">Thống kê công việc</h1>
           <p className="text-sm text-muted-foreground">
             Bảng điểm hiệu suất từ dữ liệu Pancake — gộp cả 2 page, chấm theo
             mốc đánh giá.

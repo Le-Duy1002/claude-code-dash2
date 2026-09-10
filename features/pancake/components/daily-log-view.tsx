@@ -458,7 +458,7 @@ export function DailyLogView() {
     <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="font-heading text-lg font-medium">Nhật ký AI theo ngày</h1>
+          <h1 className="font-heading text-lg font-medium">Chi tiết thang đo</h1>
           <p className="text-sm text-muted-foreground">
             AI quét toàn bộ hội thoại mỗi ngày qua API Pancake. Chọn nhân viên để
             tra soát từng ngày. Rep chậm = 3–15′ · Bỏ sót = &gt; 15′ hoặc không

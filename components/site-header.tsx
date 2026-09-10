@@ -11,8 +11,8 @@ const TITLES: Record<string, string> = {
   "/dashboard/task": "Công việc",
   "/du-an": "Dự án",
   "/lich-lam-viec": "Lịch làm việc",
-  "/theo-doi-cong-viec": "Theo dõi công việc",
-  "/nhat-ky-ai": "Nhật ký AI theo ngày",
+  "/theo-doi-cong-viec": "Thống kê công việc",
+  "/nhat-ky-ai": "Chi tiết thang đo",
   "/bang-luong": "Bảng lương",
   "/documents": "Tài liệu",
 }

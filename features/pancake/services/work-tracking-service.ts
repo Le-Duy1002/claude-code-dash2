@@ -82,7 +82,7 @@ export async function fetchWorkTracking(
 }
 
 /**
- * Reads the "Nhật ký AI theo ngày" table for one staff member — one row per
+ * Reads the "Chi tiết thang đo" table for one staff member — one row per
  * day over the selected range, from the same synced aggregates.
  */
 export async function fetchDailyLog(
