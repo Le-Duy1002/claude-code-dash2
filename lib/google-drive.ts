@@ -195,12 +195,21 @@ export async function getChangesStartPageToken(): Promise<string> {
  * Subscribes a web-hook to the read account's Drive change feed (which only
  * contains what has been shared with it — i.e. the "Dự án" folder subtree).
  * Any change there pings `address`.
+ *
+ * A channel is a time-limited subscription, not something stored permanently
+ * on the folder — Drive stops delivering the instant it expires and there is
+ * no way to make one last forever, only to keep re-registering before it
+ * lapses. Without an explicit `expiration` Drive silently applies its own
+ * (short) default, so ask for the longest window we want and let Drive clamp
+ * it to whatever the real platform max turns out to be.
  */
 export async function watchChanges(params: {
   channelId: string
   address: string
   token: string
   pageToken: string
+  /** requested expiration, epoch ms — Drive may grant less */
+  expirationMs: number
 }): Promise<{ resourceId: string; expiration: number }> {
   const drive = readClient()
   const res = await drive.changes.watch({
@@ -211,6 +220,7 @@ export async function watchChanges(params: {
       type: "web_hook",
       address: params.address,
       token: params.token,
+      expiration: String(params.expirationMs),
     },
   })
   return {

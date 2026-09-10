@@ -232,8 +232,10 @@ export async function reconcileAllProjectDocuments(): Promise<{
 const watchDoc = () =>
   adminDb().collection("projectDriveMeta").doc("driveWatch")
 
+/** Requested channel lifetime — Drive may grant less; see `watchChanges`. */
+const REQUEST_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000
 /** ms before expiry at which the renewal cron re-registers a channel. */
-const RENEW_MARGIN_MS = 24 * 60 * 60 * 1000
+const RENEW_MARGIN_MS = 20 * 60 * 1000
 /** ignore webhook pings that land within this window of the last sync. */
 export const WEBHOOK_DEBOUNCE_MS = 20 * 1000
 
@@ -277,6 +279,7 @@ export async function registerDriveWatch(force = false): Promise<{
     address,
     token,
     pageToken,
+    expirationMs: Date.now() + REQUEST_EXPIRATION_MS,
   })
 
   if (current?.channelId && current?.resourceId) {
