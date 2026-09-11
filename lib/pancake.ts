@@ -200,6 +200,12 @@ function mapOrder(raw: Record<string, unknown>): PancakeOrder {
   }
 }
 
+export type OrdersSinceResult = {
+  orders: PancakeOrder[]
+  /** `true` when `maxPages` ran out before reaching an order older than `sinceMs`. */
+  truncated: boolean
+}
+
 /**
  * Orders for a shop, newest first, walking pages until one is older than
  * `sinceMs` (or `maxPages` is hit). Pancake POS returns orders sorted by
@@ -209,8 +215,9 @@ export async function fetchOrdersSince(
   shop: PancakeShop,
   sinceMs: number,
   { pageSize = 50, maxPages = 40 }: { pageSize?: number; maxPages?: number } = {}
-): Promise<PancakeOrder[]> {
+): Promise<OrdersSinceResult> {
   const out: PancakeOrder[] = []
+  let truncated = true
   for (let page = 1; page <= maxPages; page += 1) {
     const url = new URL(`${POS_BASE}/shops/${shop.shopId}/orders`)
     url.searchParams.set("api_key", shop.apiKey)
@@ -218,7 +225,10 @@ export async function fetchOrdersSince(
     url.searchParams.set("page_size", String(pageSize))
     const body = await getJson<{ data?: Record<string, unknown>[] }>(url.toString())
     const rows = body.data ?? []
-    if (rows.length === 0) break
+    if (rows.length === 0) {
+      truncated = false
+      break
+    }
 
     let sawOlder = false
     for (const raw of rows) {
@@ -229,9 +239,12 @@ export async function fetchOrdersSince(
       }
       out.push(order)
     }
-    if (sawOlder || rows.length < pageSize) break
+    if (sawOlder || rows.length < pageSize) {
+      truncated = false
+      break
+    }
   }
-  return out
+  return { orders: out, truncated }
 }
 
 // ---------------------------------------------------------------- POS: staff
@@ -331,14 +344,25 @@ function mapConversation(raw: Record<string, unknown>): PancakeConversation {
  * ignored and always returns the first batch). Walk batches until one lands
  * entirely before `sinceMs`.
  */
+export type ConversationsSinceResult = {
+  conversations: PancakeConversation[]
+  /**
+   * `true` when the walk used every allotted batch without ever reaching a
+   * page entirely older than `sinceMs` — i.e. `maxBatches` was too small for
+   * how far back `sinceMs` is, and some older conversations may be missing.
+   */
+  truncated: boolean
+}
+
 export async function fetchConversationsSince(
   fbPageId: string,
   sinceMs: number,
   { maxBatches = 25 }: { maxBatches?: number } = {}
-): Promise<PancakeConversation[]> {
+): Promise<ConversationsSinceResult> {
   const out: PancakeConversation[] = []
   const seen = new Set<string>()
   let cursor = 0
+  let truncated = true
 
   for (let batch = 0; batch < maxBatches; batch += 1) {
     const url = new URL(`${INBOX_BASE}/pages/${fbPageId}/conversations`)
@@ -348,7 +372,10 @@ export async function fetchConversationsSince(
       url.toString()
     )
     const rows = body.conversations ?? []
-    if (rows.length === 0) break
+    if (rows.length === 0) {
+      truncated = false
+      break
+    }
     cursor += rows.length
 
     let fresh = 0
@@ -364,9 +391,12 @@ export async function fetchConversationsSince(
         out.push(conv)
       }
     }
-    if (fresh === 0 || allOlder) break
+    if (fresh === 0 || allOlder) {
+      truncated = false
+      break
+    }
   }
-  return out
+  return { conversations: out, truncated }
 }
 
 // ---------------------------------------------------------- INBOX: messages

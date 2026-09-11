@@ -138,7 +138,7 @@ async function syncShopInbox(
   processed: Set<string>,
   tagId: TagSets,
   closedOrderConvIds: Set<string>,
-  conversations: Awaited<ReturnType<typeof fetchConversationsSince>>
+  conversations: PancakeConversation[]
 ): Promise<{ tree: ShopTree; crawled: number; partial: boolean }> {
   // seed from what earlier runs already captured
   const tree: ShopTree = {}
@@ -398,10 +398,20 @@ type PageInputs = {
   warnings: string[]
 }
 
+/**
+ * Both the conversation list and the order list come back newest-first, so
+ * reaching a target date means paging through everything touched between now
+ * and that date first. What decides how many pages are needed is therefore
+ * how far in the PAST `rangeFromMs` is, not how wide the sync range itself
+ * is — syncing one old month still means walking every busier month since.
+ */
+function daysBackFromNow(rangeFromMs: number): number {
+  return Math.max(1, Math.ceil((Date.now() - rangeFromMs) / 86_400_000))
+}
+
 async function fetchPageInputs(
   page: PancakePage,
-  rangeFromMs: number,
-  spanDays: number
+  rangeFromMs: number
 ): Promise<PageInputs> {
   const warnings: string[] = []
   const tagId: TagSets = {
@@ -411,6 +421,7 @@ async function fetchPageInputs(
     noReplyNeeded: new Set<number>(),
   }
   let conversations: PancakeConversation[] = []
+  const daysBack = daysBackFromNow(rangeFromMs)
 
   if (hasInboxToken() && page.fbPageId) {
     try {
@@ -428,10 +439,16 @@ async function fetchPageInputs(
       warnings.push(`${page.name}: tag — ${(error as Error).message}`)
     }
     try {
-      conversations = await fetchConversationsSince(page.fbPageId, rangeFromMs, {
-        // a wider span needs to page deeper to reach the oldest day
-        maxBatches: Math.min(150, 40 + spanDays * 3),
+      const result = await fetchConversationsSince(page.fbPageId, rangeFromMs, {
+        // further back in time needs paging deeper to reach that day
+        maxBatches: Math.min(600, 40 + daysBack * 4),
       })
+      conversations = result.conversations
+      if (result.truncated) {
+        warnings.push(
+          `${page.name}: chưa quét hết hội thoại cũ — khoảng thời gian quá xa so với hiện tại, thử đồng bộ theo đợt gần hơn.`
+        )
+      }
     } catch (error) {
       warnings.push(`${page.name}: hội thoại — ${(error as Error).message}`)
     }
@@ -454,10 +471,16 @@ async function fetchPageInputs(
   let orders: PancakeOrder[] = []
   if (shop) {
     try {
-      orders = await fetchOrdersSince(shop, rangeFromMs, {
+      const result = await fetchOrdersSince(shop, rangeFromMs, {
         pageSize: 100,
-        maxPages: Math.min(200, 40 + spanDays * 4),
+        maxPages: Math.min(600, 40 + daysBack * 4),
       })
+      orders = result.orders
+      if (result.truncated) {
+        warnings.push(
+          `${page.name}: chưa quét hết đơn hàng cũ — khoảng thời gian quá xa so với hiện tại, thử đồng bộ theo đợt gần hơn.`
+        )
+      }
     } catch (error) {
       warnings.push(`${page.name}: đơn hàng — ${(error as Error).message}`)
     }
@@ -549,7 +572,7 @@ export async function syncDays(
   const pages = pancakePages()
   const rangeFromMs = vnDayRange(sorted[0]).fromMs
   const inputs = await Promise.all(
-    pages.map((page) => fetchPageInputs(page, rangeFromMs, sorted.length))
+    pages.map((page) => fetchPageInputs(page, rangeFromMs))
   )
 
   const out: AgentDayDoc[] = []
