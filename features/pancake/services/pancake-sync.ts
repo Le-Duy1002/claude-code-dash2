@@ -43,6 +43,13 @@ type TagSets = {
 const CANCELLED_STATUSES = new Set([11, 12, 13, 14, 15, 16])
 /** Max NEW conversations to message-crawl per shop per sync run. */
 const MAX_CRAWL = 450
+/**
+ * Same cap, but for a deep (historical, >`DEEP_SYNC_THRESHOLD_DAYS`) sync:
+ * kept small so one busy day can't eat the whole route time budget by
+ * itself — `processed`/`partial` already make this incremental, so the rest
+ * of that day's backlog is picked up by the next "Đồng bộ ngay" click.
+ */
+const MAX_CRAWL_DEEP = 40
 /** Concurrency for the message crawl (the inbox API is globally throttled). */
 const CRAWL_CONCURRENCY = 6
 /** Keep only the N most recent offending events per bucket in Firestore. */
@@ -138,7 +145,8 @@ async function syncShopInbox(
   processed: Set<string>,
   tagId: TagSets,
   closedOrderConvIds: Set<string>,
-  conversations: PancakeConversation[]
+  conversations: PancakeConversation[],
+  maxCrawl: number = MAX_CRAWL
 ): Promise<{ tree: ShopTree; crawled: number; partial: boolean }> {
   // seed from what earlier runs already captured
   const tree: ShopTree = {}
@@ -183,8 +191,8 @@ async function syncShopInbox(
         !processed.has(conv.id)
     )
     .sort((a, b) => b.lastCustomerAtMs - a.lastCustomerAtMs)
-  const partial = toCrawl.length > MAX_CRAWL
-  const crawlSet = toCrawl.slice(0, MAX_CRAWL)
+  const partial = toCrawl.length > maxCrawl
+  const crawlSet = toCrawl.slice(0, maxCrawl)
 
   if (!shop.fbPageId) return { tree, crawled: 0, partial: false }
 
@@ -418,10 +426,18 @@ function daysBackFromNow(rangeFromMs: number): number {
  */
 const DEEP_SYNC_THRESHOLD_DAYS = 35
 
-/** How long `fetchPageInputs` (conversations + orders) may run before it must
- * stop and let `buildDay` use whatever time remains under the route's
- * `maxDuration`. */
-const CRAWL_TIME_BUDGET_MS = 220_000
+/**
+ * How long `fetchPageInputs` (the conversation/order LIST walk) may run
+ * before it must stop, leaving the rest of the route's `maxDuration` (300s)
+ * for the per-day message crawl below. Deliberately well under half the
+ * route budget — a deep walk with real data to crawl can otherwise still
+ * blow the deadline in the per-day phase, which Vercel kills with no
+ * response at all (no partial result, unlike a graceful stop here).
+ */
+const CRAWL_TIME_BUDGET_MS = 150_000
+/** Hard stop for the whole route (per-day loop included), safely under the
+ * platform's 300s `maxDuration` kill. */
+const ROUTE_TIME_BUDGET_MS = 260_000
 
 type CrawlCursor = { conv: number; order: number; forRangeFromMs: number }
 
@@ -575,7 +591,8 @@ async function fetchPageInputs(
 async function buildDay(
   dateISO: string,
   inputs: PageInputs[],
-  fresh: boolean
+  fresh: boolean,
+  maxCrawl: number = MAX_CRAWL
 ): Promise<AgentDayDoc> {
   const { fromMs, toMs } = vnDayRange(dateISO)
   const warnings: string[] = []
@@ -615,7 +632,8 @@ async function buildDay(
       processed,
       input.tagId,
       closedOrderConvIds,
-      input.conversations
+      input.conversations,
+      maxCrawl
     )
     inboxData[fbPageId] = inbox.tree
     convsCrawled += inbox.crawled
@@ -653,14 +671,26 @@ export async function syncDays(
 
   const pages = pancakePages()
   const rangeFromMs = vnDayRange(sorted[0]).fromMs
-  const deadlineMs = Date.now() + CRAWL_TIME_BUDGET_MS
+  const startedAt = Date.now()
+  const deep = daysBackFromNow(rangeFromMs) > DEEP_SYNC_THRESHOLD_DAYS
+  const phase1DeadlineMs = startedAt + CRAWL_TIME_BUDGET_MS
+  const routeDeadlineMs = startedAt + ROUTE_TIME_BUDGET_MS
   const inputs = await Promise.all(
-    pages.map((page) => fetchPageInputs(page, rangeFromMs, deadlineMs))
+    pages.map((page) => fetchPageInputs(page, rangeFromMs, phase1DeadlineMs))
   )
 
+  // A deep (historical) walk can turn up far more new conversations per day
+  // than a routine sync — cap each day's message crawl lower and stop
+  // starting new days once close to the route's hard timeout, so the
+  // function returns a partial-but-valid response instead of getting killed
+  // mid-flight with no result at all. `partial`/`processed` make this safe:
+  // whatever's left is picked up by the next "Đồng bộ ngay" click.
   const out: AgentDayDoc[] = []
   for (const date of sorted) {
-    out.push(await buildDay(date, inputs, fresh))
+    if (Date.now() >= routeDeadlineMs) break
+    out.push(
+      await buildDay(date, inputs, fresh, deep ? MAX_CRAWL_DEEP : MAX_CRAWL)
+    )
   }
   return out
 }
