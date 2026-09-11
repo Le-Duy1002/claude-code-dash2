@@ -91,6 +91,7 @@ export function PayslipDialog({
 
   const [demoRevenue, setDemoRevenue] = React.useState("0")
   const [demoPct, setDemoPct] = React.useState("")
+  const [paidHours, setPaidHours] = React.useState("")
   const [reportLate, setReportLate] = React.useState("0")
   const [fixedApproved, setFixedApproved] = React.useState(false)
   const [reason, setReason] = React.useState("")
@@ -100,6 +101,7 @@ export function PayslipDialog({
     if (!input) return
     setDemoRevenue(String(input.demoRevenue ?? 0))
     setDemoPct(input.demoBonusPctManual == null ? "" : String(input.demoBonusPctManual))
+    setPaidHours(input.paidHoursManual == null ? "" : String(input.paidHoursManual))
     setReportLate(String(input.reportLateCount ?? 0))
     setFixedApproved(Boolean(input.fixedBonusApproved))
     setReason("")
@@ -108,10 +110,12 @@ export function PayslipDialog({
   if (!staffKey || !input) return null
 
   const pctManual = demoPct.trim() === "" ? null : Number(demoPct)
+  const paidHoursManual = paidHours.trim() === "" ? null : Number(paidHours)
   const draft = {
     ...input,
     demoRevenue: Number(demoRevenue) || 0,
     demoBonusPctManual: pctManual,
+    paidHoursManual,
     reportLateCount: Number(reportLate) || 0,
     fixedBonusApproved: fixedApproved,
   }
@@ -121,6 +125,7 @@ export function PayslipDialog({
   const dirty =
     draft.demoRevenue !== input.demoRevenue ||
     draft.demoBonusPctManual !== input.demoBonusPctManual ||
+    draft.paidHoursManual !== input.paidHoursManual ||
     draft.reportLateCount !== input.reportLateCount ||
     draft.fixedBonusApproved !== input.fixedBonusApproved
 
@@ -133,6 +138,7 @@ export function PayslipDialog({
         {
           demoRevenue: draft.demoRevenue,
           demoBonusPctManual: draft.demoBonusPctManual,
+          paidHoursManual: draft.paidHoursManual,
           reportLateCount: draft.reportLateCount,
           fixedBonusApproved: draft.fixedBonusApproved,
         },
@@ -200,11 +206,28 @@ export function PayslipDialog({
             label="Giờ theo lịch"
             value={input.hasSchedule ? formatHours(input.expectedHours) : "—"}
           />
-          <Line
-            label="Giờ làm thực tế"
-            value={input.hasSchedule ? formatHours(input.paidHours) : "chờ"}
-            tone={input.hasSchedule ? undefined : "bad"}
-          />
+          <div className="flex items-center justify-between gap-3 py-1 text-sm">
+            <span className="text-muted-foreground">
+              Giờ làm thực tế{" "}
+              <span className="text-xs">
+                (trống = tự tính theo Pancake khớp lịch
+                {input.hasSchedule ? `, hiện ${formatHours(input.paidHours)}` : ""})
+              </span>
+            </span>
+            {input.hasSchedule ? (
+              <Input
+                type="number"
+                inputMode="decimal"
+                placeholder="auto"
+                className="h-7 w-20 text-right"
+                value={paidHours}
+                disabled={locked && !reason.trim()}
+                onChange={(e) => setPaidHours(e.target.value)}
+              />
+            ) : (
+              <span className="tabular-nums text-destructive">chờ</span>
+            )}
+          </div>
           <Line
             label={`Trong đó giờ cuối ca (×2 = ${formatVnd(p.lastHourRate)})`}
             value={formatHours(input.paidLastHourHours)}

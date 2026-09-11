@@ -102,6 +102,8 @@ export type PayrollRowInput = {
   countedShifts: number
   expectedHours: number
   paidHours: number
+  /** override giờ làm thực tế — null = tự tính theo hoạt động Pancake khớp lịch */
+  paidHoursManual: number | null
   paidLastHourHours: number
   lateShiftCount: number
   shortAbsenceCount: number
@@ -127,6 +129,7 @@ export function emptyRowInput(): PayrollRowInput {
     countedShifts: 0,
     expectedHours: 0,
     paidHours: 0,
+    paidHoursManual: null,
     paidLastHourHours: 0,
     lateShiftCount: 0,
     shortAbsenceCount: 0,
@@ -152,6 +155,7 @@ export type PayrollManualPatch = Partial<
     | "demoBonusPctManual"
     | "reportLateCount"
     | "fixedBonusApproved"
+    | "paidHoursManual"
   >
 >
 
@@ -253,8 +257,9 @@ export function computeRow(
 ): PayrollComputed {
   const pending: string[] = []
 
+  const effectivePaidHours = input.paidHoursManual ?? input.paidHours
   const pay = input.hasSchedule
-    ? hourPay(input.paidHours, input.paidLastHourHours, p)
+    ? hourPay(effectivePaidHours, input.paidLastHourHours, p)
     : 0
   if (!input.hasSchedule) pending.push("Giờ công — chưa có lịch chốt cho kỳ")
 

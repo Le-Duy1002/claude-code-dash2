@@ -237,6 +237,7 @@ export async function buildPayrollPeriod(
     row.ratingIsExcellent = rating === "Xuất sắc"
     row.demoRevenue = prev?.demoRevenue ?? 0
     row.demoBonusPctManual = prev?.demoBonusPctManual ?? null
+    row.paidHoursManual = prev?.paidHoursManual ?? null
     row.reportLateCount = prev?.reportLateCount ?? 0
     row.fixedBonusApproved = prev?.fixedBonusApproved ?? false
     rows[member.key] = row
@@ -320,6 +321,17 @@ export async function savePayrollManual(
       if (v < 0 || v > 100) throw new PayrollError("% thưởng không hợp lệ")
       updates[`rows.${staffKey}.demoBonusPctManual`] = v
       parts.push(`% thưởng demo (nhập tay) = ${v}%`)
+    }
+  }
+  if ("paidHoursManual" in patch) {
+    const v = patch.paidHoursManual
+    if (v == null) {
+      updates[`rows.${staffKey}.paidHoursManual`] = null
+      parts.push("giờ làm thực tế = tự động theo Pancake")
+    } else {
+      if (v < 0) throw new PayrollError("Giờ làm không hợp lệ")
+      updates[`rows.${staffKey}.paidHoursManual`] = v
+      parts.push(`giờ làm thực tế (nhập tay) = ${v}h`)
     }
   }
   if (typeof patch.reportLateCount === "number") {
