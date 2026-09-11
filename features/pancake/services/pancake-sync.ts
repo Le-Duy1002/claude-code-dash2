@@ -44,12 +44,13 @@ const CANCELLED_STATUSES = new Set([11, 12, 13, 14, 15, 16])
 /** Max NEW conversations to message-crawl per shop per sync run. */
 const MAX_CRAWL = 450
 /**
- * Same cap, but for a deep (historical, >`DEEP_SYNC_THRESHOLD_DAYS`) sync:
- * kept small so one busy day can't eat the whole route time budget by
- * itself — `processed`/`partial` already make this incremental, so the rest
- * of that day's backlog is picked up by the next "Đồng bộ ngay" click.
+ * Same cap, but for a deep (historical, >`DEEP_SYNC_THRESHOLD_DAYS`) sync. A
+ * resumed deep call only ever builds ONE date (see `syncDays`), so it gets
+ * the whole remaining route budget to itself — can afford a much higher cap
+ * than a routine multi-day sync would. `processed`/`partial` still make this
+ * incremental if even that's not enough for one unusually busy day.
  */
-const MAX_CRAWL_DEEP = 40
+const MAX_CRAWL_DEEP = 300
 /** Concurrency for the message crawl (the inbox API is globally throttled). */
 const CRAWL_CONCURRENCY = 6
 /** Keep only the N most recent offending events per bucket in Firestore. */
@@ -405,46 +406,36 @@ type PageInputs = {
   orders: PancakeOrder[]
   warnings: string[]
   /**
-   * How deep (chronologically) this call's OWN conversation/order walk
-   * actually reached, and the boundary it resumed FROM (if it resumed at
-   * all). A calendar day is only safe to build from `conversations`/`orders`
-   * when its whole range sits inside `[oldestSeenMs, resumedFromMs)` — older
-   * than that and the walk simply hasn't reached it yet; more recent than
-   * that and it's in the "already covered by an earlier call" zone this call
-   * skipped re-fetching (see `loadCrawlCursor`). Getting this wrong is what
-   * silently reported real July days as "0 conversations" the first time
-   * resuming shipped: a resumed walk that successfully reached July 1 still
-   * has NOT looked at, say, July 13 — that day was above (`resumedFromMs`)
-   * this call's resume point, examined only by an earlier, now-discarded walk.
+   * Whether this call's OWN conversation/order walk structurally confirmed
+   * reaching `rangeFromMs` (found a batch entirely older than it, or hit the
+   * true end of history) — i.e. `!truncated`. This is the only thing worth
+   * trusting as "how deep did we get": a running min over individual
+   * timestamps is NOT — Pancake's pagination isn't a clean function of
+   * calendar time (a conversation's sort key can end up out of step with
+   * its actual customer-message day), so a min-based frontier can silently
+   * overshoot deeper than anything actually contiguously examined. Once
+   * overshot there was no way back (a frontier only ever moves deeper),
+   * which is exactly what made real July conversations permanently
+   * unreachable the first time a timestamp-based frontier shipped.
    */
-  convOldestSeenMs: number
-  convResumedFromMs: number
-  orderOldestSeenMs: number
-  orderResumedFromMs: number
-  /**
-   * What to do with this page's persisted crawl cursor — deferred until
-   * `syncDays` knows whether the day-building loop actually got through
-   * every requested date. Applying it unconditionally (right after the
-   * fetch) let a busy call push the walk position past dates its OWN
-   * message-crawl phase never got time to reach, permanently stranding them:
-   * a later resumed call would skip straight past that gap forever, since it
-   * only re-examines what's BELOW the saved position. Only safe to commit
-   * once nothing from this call's fetch was left stranded by the clock.
-   */
-  cursorAction:
-    | { type: "none" }
-    | { type: "clear" }
-    | { type: "save"; cursor: CrawlCursor }
+  convReachedTarget: boolean
+  orderReachedTarget: boolean
+  /** `true` when this page's walk resumed from a saved cursor rather than
+   * starting fresh at position 0 — see `syncDays` for why that caps how
+   * many dates a call is allowed to build. */
+  resumed: boolean
 }
 
-/** A day is safe to build from one page's fetched data only if its whole
- * range was actually examined by that page's walk this call. */
-function dayCoveredByPage(fromMs: number, toMs: number, pi: PageInputs): boolean {
-  const convOk =
-    fromMs >= pi.convOldestSeenMs && toMs <= pi.convResumedFromMs
-  const orderOk =
-    !pi.shop || (fromMs >= pi.orderOldestSeenMs && toMs <= pi.orderResumedFromMs)
-  return convOk && orderOk
+/**
+ * A page's data is trustworthy for `rangeFromMs`'s own day once this call
+ * structurally confirmed reaching it. That's the only day `syncDays` will
+ * ever ask to build from a RESUMED call (see there for why) — a resumed
+ * call's fetch starts at a saved position with no reliable way to know its
+ * chronological upper edge, so nothing shallower than that boundary date is
+ * safe to build from it, no matter how deep the walk went past the target.
+ */
+function pageReachedTarget(pi: PageInputs): boolean {
+  return pi.convReachedTarget && (!pi.shop || pi.orderReachedTarget)
 }
 
 /**
@@ -480,43 +471,30 @@ const CRAWL_TIME_BUDGET_MS = 150_000
  * platform's 300s `maxDuration` kill. */
 const ROUTE_TIME_BUDGET_MS = 260_000
 
-/**
- * Stand-in for "unbounded" in fields that get persisted to Firestore —
- * `Infinity` round-trips oddly through some Firestore SDKs, so cap at this
- * instead. Any real timestamp is astronomically smaller.
- */
-const FAR_FUTURE_MS = Number.MAX_SAFE_INTEGER
-
 type CrawlCursor = {
   conv: number
   order: number
-  /**
-   * Chronological depth the CUMULATIVE walk (across every past deep sync
-   * call for this page) has reached — the boundary a future resumed call
-   * must not claim to have (re-)examined above. Lower = deeper into history.
-   */
-  convFrontierMs: number
-  orderFrontierMs: number
 }
 
 /**
  * A resumable walk position per fbPageId for deep (historical) syncs: "we've
- * walked from the top down to this cursor / this deep." Always safe to
- * resume FROM (see `fetchConversationsSince`'s doc comment) — what makes a
- * date safe to actually BUILD from a resumed call's data is the separate
- * `dayCoveredByPage` check against `convFrontierMs`/`orderFrontierMs`, not
- * anything about when this cursor was saved.
+ * walked from the top down to this raw position." Always safe to resume
+ * FROM (see `fetchConversationsSince`'s doc comment: churn only causes a
+ * little redundant re-fetching of the tail, never a skip) — deliberately
+ * just a raw position, nothing chronological. An earlier version also
+ * tracked a "how deep in time did we get" frontier to let a resumed call
+ * build MORE than just `rangeFromMs`'s own day; that measurement (a running
+ * min over individual timestamps) turned out to be unsafe — Pancake's sort
+ * order isn't a clean function of calendar time, so it could silently
+ * overshoot deeper than anything actually contiguously examined, and once
+ * overshot there was no way back. See `syncDays` for the (slower, but
+ * always correct) one-day-per-resumed-call replacement.
  */
 async function loadCrawlCursor(fbPageId: string): Promise<CrawlCursor | null> {
   const snap = await adminDb().collection("pancakeCrawlCursors").doc(fbPageId).get()
   const data = snap.data() as Partial<CrawlCursor> | undefined
   if (!data) return null
-  return {
-    conv: data.conv ?? 0,
-    order: data.order ?? 0,
-    convFrontierMs: data.convFrontierMs ?? FAR_FUTURE_MS,
-    orderFrontierMs: data.orderFrontierMs ?? FAR_FUTURE_MS,
-  }
+  return { conv: data.conv ?? 0, order: data.order ?? 0 }
 }
 
 async function saveCrawlCursor(
@@ -555,12 +533,10 @@ async function fetchPageInputs(
   let endOrderPage = 1
   let convComplete = false
   let orderComplete = false
-  // 0 ("examined all the way back") when there's nothing to wait on, so a
+  // true ("nothing to wait on") when there's no inbox/shop configured, so a
   // missing token/shop can't block every date from ever being built.
-  let convOldestSeenMs = hasInboxToken() && page.fbPageId ? FAR_FUTURE_MS : 0
-  let orderOldestSeenMs = page.apiKey && page.shopId ? FAR_FUTURE_MS : 0
-  const convResumedFromMs = saved?.convFrontierMs ?? FAR_FUTURE_MS
-  const orderResumedFromMs = saved?.orderFrontierMs ?? FAR_FUTURE_MS
+  let convReachedTarget = !hasInboxToken() || !page.fbPageId
+  let orderReachedTarget = !page.apiKey || !page.shopId
 
   if (hasInboxToken() && page.fbPageId) {
     try {
@@ -587,9 +563,7 @@ async function fetchPageInputs(
       conversations = result.conversations
       endConvCursor = result.endCursor
       convComplete = result.complete
-      convOldestSeenMs = result.complete
-        ? 0
-        : Math.min(result.oldestSeenMs, FAR_FUTURE_MS)
+      convReachedTarget = !result.truncated
       if (result.truncated) {
         warnings.push(
           deep
@@ -628,9 +602,7 @@ async function fetchPageInputs(
       orders = result.orders
       endOrderPage = result.endPage
       orderComplete = result.complete
-      orderOldestSeenMs = result.complete
-        ? 0
-        : Math.min(result.oldestSeenMs, FAR_FUTURE_MS)
+      orderReachedTarget = !result.truncated
       if (result.truncated) {
         warnings.push(
           deep
@@ -643,27 +615,20 @@ async function fetchPageInputs(
     }
   }
 
-  const cursorAction: PageInputs["cursorAction"] =
-    !deep || !page.fbPageId
-      ? { type: "none" }
-      : convComplete && (orderComplete || !shop)
-        ? { type: "clear" }
-        : {
-            type: "save",
-            cursor: {
-              conv: endConvCursor,
-              order: endOrderPage,
-              // monotonic: a frontier only ever gets deeper (smaller), never back up
-              convFrontierMs: Math.min(
-                saved?.convFrontierMs ?? FAR_FUTURE_MS,
-                convOldestSeenMs
-              ),
-              orderFrontierMs: Math.min(
-                saved?.orderFrontierMs ?? FAR_FUTURE_MS,
-                orderOldestSeenMs
-              ),
-            },
-          }
+  // The raw walk position is always safe to persist immediately — resuming
+  // from it never skips anything (see `loadCrawlCursor`'s doc comment), so
+  // unlike the old chronological frontier this doesn't need to wait on
+  // whether `syncDays`'s day-building loop actually got to run.
+  if (deep && page.fbPageId) {
+    if (convComplete && (orderComplete || !shop)) {
+      await clearCrawlCursor(page.fbPageId)
+    } else {
+      await saveCrawlCursor(page.fbPageId, {
+        conv: endConvCursor,
+        order: endOrderPage,
+      })
+    }
+  }
 
   return {
     page,
@@ -673,11 +638,9 @@ async function fetchPageInputs(
     convTags,
     orders,
     warnings,
-    convOldestSeenMs,
-    convResumedFromMs,
-    orderOldestSeenMs,
-    orderResumedFromMs,
-    cursorAction,
+    convReachedTarget,
+    orderReachedTarget,
+    resumed: saved != null,
   }
 }
 
@@ -763,61 +726,53 @@ export async function syncDays(
   const sorted = [...new Set(dates)].sort()
   if (sorted.length === 0) return []
 
+  const deep =
+    daysBackFromNow(vnDayRange(sorted[0]).fromMs) > DEEP_SYNC_THRESHOLD_DAYS
+
+  // Deep syncs proceed one confirmed date at a time (see below) — retarget
+  // to whichever requested date still needs it instead of re-attempting
+  // ones an earlier call already built.
+  let pending = sorted
+  if (deep && !fresh) {
+    const refs = sorted.map((d) =>
+      adminDb().collection("pancakeAgentDaily").doc(d)
+    )
+    const snaps = await adminDb().getAll(...refs)
+    pending = sorted.filter((_, i) => !snaps[i].exists)
+  }
+  if (pending.length === 0) return []
+
   const pages = pancakePages()
-  const rangeFromMs = vnDayRange(sorted[0]).fromMs
+  const rangeFromMs = vnDayRange(pending[0]).fromMs
   const startedAt = Date.now()
-  const deep = daysBackFromNow(rangeFromMs) > DEEP_SYNC_THRESHOLD_DAYS
   const phase1DeadlineMs = startedAt + CRAWL_TIME_BUDGET_MS
   const routeDeadlineMs = startedAt + ROUTE_TIME_BUDGET_MS
   const inputs = await Promise.all(
     pages.map((page) => fetchPageInputs(page, rangeFromMs, phase1DeadlineMs))
   )
 
-  // A deep (historical) walk can turn up far more new conversations per day
-  // than a routine sync — cap each day's message crawl lower and stop
-  // starting new days once close to the route's hard timeout, so the
-  // function returns a partial-but-valid response instead of getting killed
-  // mid-flight with no result at all. `partial`/`processed` make this safe:
-  // whatever's left is picked up by the next "Đồng bộ ngay" click.
+  // A call that resumed a saved walk position has no reliable way to know
+  // its chronological upper edge (see `PageInputs.convReachedTarget`), so it
+  // only ever builds `rangeFromMs`'s own day — the one date structurally
+  // guaranteed covered by walking contiguously from that position down past
+  // the target. A fresh (position-0) call has no such limit: its fetch is
+  // contiguous from right now, so once it reaches the target every
+  // requested date is safe to build (bounded by the route's time budget
+  // below, same as a routine sync). Slower for a deep backlog — one date
+  // per resumed call — but never silently wrong.
+  const resumedThisCall = deep && inputs.some((pi) => pi.resumed)
+  const buildable = resumedThisCall ? pending.slice(0, 1) : pending
+  const reached = !deep || inputs.every((pi) => pageReachedTarget(pi))
+
   const out: AgentDayDoc[] = []
-  let cutShort = false
-  for (const date of sorted) {
-    if (Date.now() >= routeDeadlineMs) {
-      cutShort = true
-      break
+  if (reached) {
+    for (const date of buildable) {
+      if (Date.now() >= routeDeadlineMs) break
+      out.push(
+        await buildDay(date, inputs, fresh, deep ? MAX_CRAWL_DEEP : MAX_CRAWL)
+      )
     }
-    const { fromMs, toMs } = vnDayRange(date)
-    // A resumed walk may have skipped re-fetching some more-recent slice
-    // already covered by an earlier call — don't (re)build a day unless
-    // EVERY page's data this call actually examined that day's whole range.
-    // Leaving it out here (rather than writing a false "0 data" doc) means
-    // the next "Đồng bộ ngay" click picks it up once the walk covers it.
-    if (!inputs.every((pi) => dayCoveredByPage(fromMs, toMs, pi))) continue
-    out.push(
-      await buildDay(date, inputs, fresh, deep ? MAX_CRAWL_DEEP : MAX_CRAWL)
-    )
   }
-
-  // Only commit each page's crawl-cursor progress once every requested date
-  // has actually been dealt with (built, or correctly deemed not-yet-reached)
-  // — see `PageInputs.cursorAction`. Committing it after a clock-driven early
-  // exit would push the walk position past dates this call's OWN fetch
-  // covered but never got time to build, stranding them forever: a later
-  // resumed call only re-examines what's BELOW the saved position.
-  if (!cutShort) {
-    await Promise.all(
-      inputs.map((pi) => {
-        if (pi.cursorAction.type === "clear" && pi.page.fbPageId) {
-          return clearCrawlCursor(pi.page.fbPageId)
-        }
-        if (pi.cursorAction.type === "save" && pi.page.fbPageId) {
-          return saveCrawlCursor(pi.page.fbPageId, pi.cursorAction.cursor)
-        }
-        return undefined
-      })
-    )
-  }
-
   return out
 }
 
