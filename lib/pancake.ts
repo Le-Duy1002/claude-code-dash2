@@ -208,6 +208,14 @@ export type OrdersSinceResult = {
   complete: boolean
   /** `page_number` to resume from — pass as `startPage` to continue this walk later. */
   endPage: number
+  /**
+   * `insertedAtMs` of the oldest order actually examined this call (`Infinity`
+   * if none). A calendar day is only safe to build from `orders` if the day's
+   * whole range is `>= oldestSeenMs` — older days simply haven't been reached
+   * yet by this call, even though nothing "older than sinceMs" was found for
+   * them (that check only fires once the walk actually gets there).
+   */
+  oldestSeenMs: number
 }
 
 /**
@@ -237,6 +245,7 @@ export async function fetchOrdersSince(
   let truncated = true
   let complete = false
   let page = startPage
+  let oldestSeenMs = Infinity
   for (let i = 0; i < maxPages; i += 1) {
     if (Date.now() >= deadlineMs) break
     const url = new URL(`${POS_BASE}/shops/${shop.shopId}/orders`)
@@ -255,6 +264,7 @@ export async function fetchOrdersSince(
     let sawOlder = false
     for (const raw of rows) {
       const order = mapOrder(raw)
+      if (order.insertedAtMs) oldestSeenMs = Math.min(oldestSeenMs, order.insertedAtMs)
       if (order.insertedAtMs && order.insertedAtMs < sinceMs) {
         sawOlder = true
         continue
@@ -266,7 +276,7 @@ export async function fetchOrdersSince(
       break
     }
   }
-  return { orders: out, truncated, complete, endPage: page }
+  return { orders: out, truncated, complete, endPage: page, oldestSeenMs }
 }
 
 // ---------------------------------------------------------------- POS: staff
@@ -378,6 +388,15 @@ export type ConversationsSinceResult = {
   complete: boolean
   /** `current_count` cursor to resume from — pass as `startCursor` to continue this walk later. */
   endCursor: number
+  /**
+   * The smallest `touchedAt` (= `max(updatedAtMs, lastCustomerAtMs)`) seen
+   * this call (`Infinity` if none). A calendar day is only safe to build from
+   * `conversations` once `oldestSeenMs <= that day's start` — since a
+   * conversation's `touchedAt` is always `>= lastCustomerAtMs`, this
+   * guarantees every conversation whose customer message falls on that day
+   * has actually been examined, not just "not yet reached" by the walk.
+   */
+  oldestSeenMs: number
 }
 
 /**
@@ -401,6 +420,7 @@ export async function fetchConversationsSince(
   let cursor = startCursor
   let truncated = true
   let complete = false
+  let oldestSeenMs = Infinity
 
   for (let batch = 0; batch < maxBatches; batch += 1) {
     if (Date.now() >= deadlineMs) break
@@ -426,6 +446,7 @@ export async function fetchConversationsSince(
       seen.add(conv.id)
       fresh += 1
       const touchedAt = Math.max(conv.updatedAtMs, conv.lastCustomerAtMs)
+      if (touchedAt) oldestSeenMs = Math.min(oldestSeenMs, touchedAt)
       if (touchedAt && touchedAt >= sinceMs) {
         allOlder = false
         out.push(conv)
@@ -436,7 +457,7 @@ export async function fetchConversationsSince(
       break
     }
   }
-  return { conversations: out, truncated, complete, endCursor: cursor }
+  return { conversations: out, truncated, complete, endCursor: cursor, oldestSeenMs }
 }
 
 // ---------------------------------------------------------- INBOX: messages
