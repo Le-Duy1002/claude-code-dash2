@@ -44,13 +44,16 @@ const CANCELLED_STATUSES = new Set([11, 12, 13, 14, 15, 16])
 /** Max NEW conversations to message-crawl per shop per sync run. */
 const MAX_CRAWL = 450
 /**
- * Same cap, but for a deep (historical, >`DEEP_SYNC_THRESHOLD_DAYS`) sync:
- * kept small so one busy day can't eat the whole route time budget by
- * itself, leaving room for the OTHER dates a successful deep call can build
- * in the same pass — `processed`/`partial` already make this incremental,
- * so the rest of a busy day's backlog is picked up by a later sync.
+ * Same cap, but for a deep (historical, >`DEEP_SYNC_THRESHOLD_DAYS`) sync.
+ * Lower than `MAX_CRAWL` so one busy day can't eat the whole route time
+ * budget and starve the other dates a successful deep call could otherwise
+ * finish in the same pass — but high enough that most days fully clear in
+ * one or two passes. The client (`syncPancakeRange`) re-requests a range
+ * automatically until nothing comes back `partial`, so this only trades off
+ * how many of those automatic round trips a full historical backfill needs,
+ * not whether it ever finishes.
  */
-const MAX_CRAWL_DEEP = 40
+const MAX_CRAWL_DEEP = 150
 /** Concurrency for the message crawl (the inbox API is globally throttled). */
 const CRAWL_CONCURRENCY = 6
 /** Keep only the N most recent offending events per bucket in Firestore. */

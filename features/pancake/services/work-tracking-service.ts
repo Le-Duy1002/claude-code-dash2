@@ -121,12 +121,49 @@ export async function triggerPancakeSync(
   return body
 }
 
-type SyncedDay = { date: string; convsCrawled: number; partial: boolean }
+type SyncedDay = {
+  date: string
+  convsCrawled: number
+  partial: boolean
+  warnings: string[]
+}
+
+/** Re-request a chunk at most this many times before giving up on it and
+ * moving on — a genuinely enormous single day (or a page truly stuck deep in
+ * history) shouldn't hang the caller forever. */
+const MAX_ATTEMPTS_PER_CHUNK = 25
+/** ...or this long, whichever comes first. */
+const MAX_MS_PER_CHUNK = 10 * 60_000
+
+async function postSyncChunk(
+  chunk: string[],
+  fresh: boolean | undefined,
+  signal: AbortSignal | undefined
+): Promise<SyncedDay[]> {
+  const q = new URLSearchParams({ from: chunk[0], to: chunk[chunk.length - 1] })
+  if (fresh) q.set("fresh", "1")
+  const response = await fetch(`/api/pancake/sync?${q}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${await idToken()}` },
+    signal,
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new Error(body.detail || body.error || `Lỗi ${response.status}`)
+  }
+  return (body.days ?? []) as SyncedDay[]
+}
 
 /**
  * Sync a `YYYY-MM-DD` … `YYYY-MM-DD` span in bounded chunks so a full month
- * never times out. Page data is fetched once per chunk on the server; the
- * client just paces the chunks and reports progress.
+ * never times out. Page data is fetched once per chunk on the server, and
+ * each chunk is re-requested (not "fresh" — later calls reuse what earlier
+ * ones already crawled) until every one of its dates comes back present and
+ * un-`partial`, or the attempt/time budget below runs out. This is what
+ * makes a single "Đồng bộ ngay" click actually finish the job: a server call
+ * only ever crawls part of a busy day or reaches part of a deep historical
+ * range (bounded by the route's own time budget), so without this loop the
+ * caller would need to click the button again and again to converge.
  */
 export async function syncPancakeRange(
   fromISO: string,
@@ -137,7 +174,7 @@ export async function syncPancakeRange(
     signal?: AbortSignal
     onProgress?: (done: number, total: number) => void
   } = {}
-): Promise<{ days: SyncedDay[] }> {
+): Promise<{ days: SyncedDay[]; incomplete: string[] }> {
   const { chunkDays = 12, fresh, signal, onProgress } = opts
   const [lo, hi] = fromISO <= toISO ? [fromISO, toISO] : [toISO, fromISO]
   const dates = vnDatesInRange(
@@ -146,25 +183,29 @@ export async function syncPancakeRange(
   )
 
   const out: SyncedDay[] = []
+  const incomplete: string[] = []
   for (let i = 0; i < dates.length; i += chunkDays) {
-    if (signal?.aborted) throw new DOMException("Aborted", "AbortError")
     const chunk = dates.slice(i, i + chunkDays)
-    const q = new URLSearchParams({
-      from: chunk[0],
-      to: chunk[chunk.length - 1],
-    })
-    if (fresh) q.set("fresh", "1")
-    const response = await fetch(`/api/pancake/sync?${q}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${await idToken()}` },
-      signal,
-    })
-    const body = await response.json().catch(() => ({}))
-    if (!response.ok) {
-      throw new Error(body.detail || body.error || `Lỗi ${response.status}`)
+    const byDate = new Map<string, SyncedDay>()
+    const chunkStartedAt = Date.now()
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_CHUNK; attempt += 1) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError")
+      for (const day of await postSyncChunk(chunk, fresh, signal)) {
+        byDate.set(day.date, day)
+      }
+      const done = chunk.filter((d) => {
+        const day = byDate.get(d)
+        return day && !day.partial
+      }).length
+      onProgress?.(Math.min(i, dates.length) + done, dates.length)
+      if (done === chunk.length) break
+      if (Date.now() - chunkStartedAt >= MAX_MS_PER_CHUNK) break
     }
-    out.push(...((body.days ?? []) as SyncedDay[]))
-    onProgress?.(Math.min(i + chunkDays, dates.length), dates.length)
+    for (const date of chunk) {
+      const day = byDate.get(date)
+      if (day) out.push(day)
+      if (!day || day.partial) incomplete.push(date)
+    }
   }
-  return { days: out }
+  return { days: out, incomplete }
 }

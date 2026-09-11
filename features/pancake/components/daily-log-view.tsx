@@ -421,10 +421,17 @@ export function DailyLogView() {
             toast.loading(`Đồng bộ Pancake — ${done}/${total} ngày…`, { id }),
         })
         const crawled = result.days.reduce((s, d) => s + d.convsCrawled, 0)
-        toast.success(
-          `Đồng bộ xong ${result.days.length} ngày · ${crawled} hội thoại`,
-          { id }
-        )
+        if (result.incomplete.length > 0) {
+          toast.warning(
+            `Đồng bộ xong phần lớn (${crawled} hội thoại) nhưng ${result.incomplete.length} ngày còn dữ liệu chưa lấy hết (giai đoạn quá xa/quá nhiều hội thoại) — bấm "Đồng bộ ngay" lại để lấy tiếp.`,
+            { id }
+          )
+        } else {
+          toast.success(
+            `Đồng bộ xong ${result.days.length} ngày · ${crawled} hội thoại`,
+            { id }
+          )
+        }
         load()
       } catch (cause) {
         toast.error(`Đồng bộ lỗi: ${(cause as Error).message}`, { id })

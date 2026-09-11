@@ -129,13 +129,19 @@ export function PayrollView() {
     setSyncing("Đang đồng bộ Pancake…")
     setBusy(true)
     try {
-      await syncPancakeRange(fromISO, toISO, {
+      const result = await syncPancakeRange(fromISO, toISO, {
         onProgress: (done, total) =>
           setSyncing(`Đồng bộ Pancake ${done}/${total} ngày…`),
       })
       setSyncing("Đang dựng bảng lương…")
       await buildPeriod(id)
-      toast.success("Đã đồng bộ và dựng bảng lương")
+      if (result.incomplete.length > 0) {
+        toast.warning(
+          `Đã dựng bảng lương, nhưng ${result.incomplete.length} ngày trong kỳ còn dữ liệu Pancake chưa lấy hết (giai đoạn quá xa/quá nhiều hội thoại) — bấm "Dựng bảng lương" lại để lấy tiếp và cập nhật số liệu.`
+        )
+      } else {
+        toast.success("Đã đồng bộ và dựng bảng lương")
+      }
     } catch (e) {
       const msg = (e as Error).message
       if (msg.toLowerCase().includes("forbidden")) setDenied(true)
