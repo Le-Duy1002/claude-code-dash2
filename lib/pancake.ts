@@ -202,23 +202,43 @@ function mapOrder(raw: Record<string, unknown>): PancakeOrder {
 
 export type OrdersSinceResult = {
   orders: PancakeOrder[]
-  /** `true` when `maxPages` ran out before reaching an order older than `sinceMs`. */
+  /** `true` when the walk stopped (page cap or deadline) before reaching an order older than `sinceMs`. */
   truncated: boolean
+  /** `true` when the walk reached the very end of this shop's order history. */
+  complete: boolean
+  /** `page_number` to resume from — pass as `startPage` to continue this walk later. */
+  endPage: number
 }
 
 /**
  * Orders for a shop, newest first, walking pages until one is older than
- * `sinceMs` (or `maxPages` is hit). Pancake POS returns orders sorted by
- * `inserted_at` descending, so no server-side date filter is needed.
+ * `sinceMs` (or `maxPages`/`deadlineMs` is hit). Pancake POS returns orders
+ * sorted by `inserted_at` descending, so no server-side date filter is needed.
+ * `page_number` is real offset pagination, so resuming from `startPage` after
+ * a truncated walk is safe: any churn (new orders inserted since) only causes
+ * a little redundant re-fetching of the tail already covered, never a skip.
  */
 export async function fetchOrdersSince(
   shop: PancakeShop,
   sinceMs: number,
-  { pageSize = 50, maxPages = 40 }: { pageSize?: number; maxPages?: number } = {}
+  {
+    pageSize = 50,
+    maxPages = 40,
+    startPage = 1,
+    deadlineMs = Infinity,
+  }: {
+    pageSize?: number
+    maxPages?: number
+    startPage?: number
+    deadlineMs?: number
+  } = {}
 ): Promise<OrdersSinceResult> {
   const out: PancakeOrder[] = []
   let truncated = true
-  for (let page = 1; page <= maxPages; page += 1) {
+  let complete = false
+  let page = startPage
+  for (let i = 0; i < maxPages; i += 1) {
+    if (Date.now() >= deadlineMs) break
     const url = new URL(`${POS_BASE}/shops/${shop.shopId}/orders`)
     url.searchParams.set("api_key", shop.apiKey)
     url.searchParams.set("page_number", String(page))
@@ -227,8 +247,10 @@ export async function fetchOrdersSince(
     const rows = body.data ?? []
     if (rows.length === 0) {
       truncated = false
+      complete = true
       break
     }
+    page += 1
 
     let sawOlder = false
     for (const raw of rows) {
@@ -244,7 +266,7 @@ export async function fetchOrdersSince(
       break
     }
   }
-  return { orders: out, truncated }
+  return { orders: out, truncated, complete, endPage: page }
 }
 
 // ---------------------------------------------------------------- POS: staff
@@ -347,24 +369,41 @@ function mapConversation(raw: Record<string, unknown>): PancakeConversation {
 export type ConversationsSinceResult = {
   conversations: PancakeConversation[]
   /**
-   * `true` when the walk used every allotted batch without ever reaching a
-   * page entirely older than `sinceMs` — i.e. `maxBatches` was too small for
-   * how far back `sinceMs` is, and some older conversations may be missing.
+   * `true` when the walk stopped (batch cap or deadline) without ever
+   * reaching a page entirely older than `sinceMs` — some older conversations
+   * may be missing. Resume with `startCursor: endCursor` to continue.
    */
   truncated: boolean
+  /** `true` when the walk reached the very end of this page's conversation history. */
+  complete: boolean
+  /** `current_count` cursor to resume from — pass as `startCursor` to continue this walk later. */
+  endCursor: number
 }
 
+/**
+ * `current_count` is real offset pagination, so resuming a truncated walk
+ * from `startCursor` is safe even with churn: if new conversations were
+ * touched (bumped to the top) between calls, resuming at the same numeric
+ * cursor re-reads a little of the tail already covered — it never skips
+ * conversations that lie further back than the cursor.
+ */
 export async function fetchConversationsSince(
   fbPageId: string,
   sinceMs: number,
-  { maxBatches = 25 }: { maxBatches?: number } = {}
+  {
+    maxBatches = 25,
+    startCursor = 0,
+    deadlineMs = Infinity,
+  }: { maxBatches?: number; startCursor?: number; deadlineMs?: number } = {}
 ): Promise<ConversationsSinceResult> {
   const out: PancakeConversation[] = []
   const seen = new Set<string>()
-  let cursor = 0
+  let cursor = startCursor
   let truncated = true
+  let complete = false
 
   for (let batch = 0; batch < maxBatches; batch += 1) {
+    if (Date.now() >= deadlineMs) break
     const url = new URL(`${INBOX_BASE}/pages/${fbPageId}/conversations`)
     url.searchParams.set("access_token", INBOX_TOKEN)
     url.searchParams.set("current_count", String(cursor))
@@ -374,6 +413,7 @@ export async function fetchConversationsSince(
     const rows = body.conversations ?? []
     if (rows.length === 0) {
       truncated = false
+      complete = true
       break
     }
     cursor += rows.length
@@ -396,7 +436,7 @@ export async function fetchConversationsSince(
       break
     }
   }
-  return { conversations: out, truncated }
+  return { conversations: out, truncated, complete, endCursor: cursor }
 }
 
 // ---------------------------------------------------------- INBOX: messages

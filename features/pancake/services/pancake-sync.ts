@@ -409,9 +409,58 @@ function daysBackFromNow(rangeFromMs: number): number {
   return Math.max(1, Math.ceil((Date.now() - rangeFromMs) / 86_400_000))
 }
 
+/**
+ * Past this many days back, a single request's time budget can't reliably
+ * reach `rangeFromMs` for a busy shop — fall back to a resumable walk (see
+ * `loadCrawlCursor`) instead of the one-shot `maxBatches` formula. Routine
+ * "this month" syncs stay well under this and always walk fresh from 0, so
+ * they can never accidentally resume a stale deep cursor and skip recent data.
+ */
+const DEEP_SYNC_THRESHOLD_DAYS = 35
+
+/** How long `fetchPageInputs` (conversations + orders) may run before it must
+ * stop and let `buildDay` use whatever time remains under the route's
+ * `maxDuration`. */
+const CRAWL_TIME_BUDGET_MS = 220_000
+
+type CrawlCursor = { conv: number; order: number; forRangeFromMs: number }
+
+/**
+ * A resumable frontier per fbPageId for deep (historical) syncs: "we've
+ * walked from the top down to this cursor, looking for `forRangeFromMs`."
+ * Reused only when the new request's target is the same or older — a
+ * shallower request (more recent `rangeFromMs`) always starts fresh at 0, so
+ * it can never skip recent data by resuming a cursor that's already too deep.
+ */
+async function loadCrawlCursor(fbPageId: string): Promise<CrawlCursor | null> {
+  const snap = await adminDb().collection("pancakeCrawlCursors").doc(fbPageId).get()
+  const data = snap.data() as Partial<CrawlCursor> | undefined
+  if (!data || typeof data.forRangeFromMs !== "number") return null
+  return {
+    conv: data.conv ?? 0,
+    order: data.order ?? 0,
+    forRangeFromMs: data.forRangeFromMs,
+  }
+}
+
+async function saveCrawlCursor(
+  fbPageId: string,
+  cursor: CrawlCursor
+): Promise<void> {
+  await adminDb()
+    .collection("pancakeCrawlCursors")
+    .doc(fbPageId)
+    .set({ ...cursor, updatedAt: FieldValue.serverTimestamp() })
+}
+
+async function clearCrawlCursor(fbPageId: string): Promise<void> {
+  await adminDb().collection("pancakeCrawlCursors").doc(fbPageId).delete()
+}
+
 async function fetchPageInputs(
   page: PancakePage,
-  rangeFromMs: number
+  rangeFromMs: number,
+  deadlineMs: number
 ): Promise<PageInputs> {
   const warnings: string[] = []
   const tagId: TagSets = {
@@ -422,6 +471,15 @@ async function fetchPageInputs(
   }
   let conversations: PancakeConversation[] = []
   const daysBack = daysBackFromNow(rangeFromMs)
+  const deep = daysBack > DEEP_SYNC_THRESHOLD_DAYS
+
+  const saved =
+    deep && page.fbPageId ? await loadCrawlCursor(page.fbPageId) : null
+  const resumable = saved != null && rangeFromMs <= saved.forRangeFromMs
+  let endConvCursor = 0
+  let endOrderPage = 1
+  let convComplete = false
+  let orderComplete = false
 
   if (hasInboxToken() && page.fbPageId) {
     try {
@@ -441,12 +499,18 @@ async function fetchPageInputs(
     try {
       const result = await fetchConversationsSince(page.fbPageId, rangeFromMs, {
         // further back in time needs paging deeper to reach that day
-        maxBatches: Math.min(600, 40 + daysBack * 4),
+        maxBatches: deep ? 5000 : Math.min(600, 40 + daysBack * 4),
+        startCursor: resumable ? saved!.conv : 0,
+        deadlineMs: deep ? deadlineMs : Infinity,
       })
       conversations = result.conversations
+      endConvCursor = result.endCursor
+      convComplete = result.complete
       if (result.truncated) {
         warnings.push(
-          `${page.name}: chưa quét hết hội thoại cũ — khoảng thời gian quá xa so với hiện tại, thử đồng bộ theo đợt gần hơn.`
+          deep
+            ? `${page.name}: chưa quét hết hội thoại cũ (đợt này quá dài, cần nhiều lần đồng bộ) — bấm "Đồng bộ ngay" lại để quét tiếp.`
+            : `${page.name}: chưa quét hết hội thoại cũ — khoảng thời gian quá xa so với hiện tại, thử đồng bộ theo đợt gần hơn.`
         )
       }
     } catch (error) {
@@ -473,16 +537,34 @@ async function fetchPageInputs(
     try {
       const result = await fetchOrdersSince(shop, rangeFromMs, {
         pageSize: 100,
-        maxPages: Math.min(600, 40 + daysBack * 4),
+        maxPages: deep ? 5000 : Math.min(600, 40 + daysBack * 4),
+        startPage: resumable ? saved!.order : 1,
+        deadlineMs: deep ? deadlineMs : Infinity,
       })
       orders = result.orders
+      endOrderPage = result.endPage
+      orderComplete = result.complete
       if (result.truncated) {
         warnings.push(
-          `${page.name}: chưa quét hết đơn hàng cũ — khoảng thời gian quá xa so với hiện tại, thử đồng bộ theo đợt gần hơn.`
+          deep
+            ? `${page.name}: chưa quét hết đơn hàng cũ (đợt này quá dài, cần nhiều lần đồng bộ) — bấm "Đồng bộ ngay" lại để quét tiếp.`
+            : `${page.name}: chưa quét hết đơn hàng cũ — khoảng thời gian quá xa so với hiện tại, thử đồng bộ theo đợt gần hơn.`
         )
       }
     } catch (error) {
       warnings.push(`${page.name}: đơn hàng — ${(error as Error).message}`)
+    }
+  }
+
+  if (deep && page.fbPageId) {
+    if (convComplete && (orderComplete || !shop)) {
+      await clearCrawlCursor(page.fbPageId)
+    } else {
+      await saveCrawlCursor(page.fbPageId, {
+        conv: endConvCursor,
+        order: endOrderPage,
+        forRangeFromMs: rangeFromMs,
+      })
     }
   }
 
@@ -571,8 +653,9 @@ export async function syncDays(
 
   const pages = pancakePages()
   const rangeFromMs = vnDayRange(sorted[0]).fromMs
+  const deadlineMs = Date.now() + CRAWL_TIME_BUDGET_MS
   const inputs = await Promise.all(
-    pages.map((page) => fetchPageInputs(page, rangeFromMs))
+    pages.map((page) => fetchPageInputs(page, rangeFromMs, deadlineMs))
   )
 
   const out: AgentDayDoc[] = []
