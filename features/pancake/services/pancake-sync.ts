@@ -421,6 +421,20 @@ type PageInputs = {
   convResumedFromMs: number
   orderOldestSeenMs: number
   orderResumedFromMs: number
+  /**
+   * What to do with this page's persisted crawl cursor — deferred until
+   * `syncDays` knows whether the day-building loop actually got through
+   * every requested date. Applying it unconditionally (right after the
+   * fetch) let a busy call push the walk position past dates its OWN
+   * message-crawl phase never got time to reach, permanently stranding them:
+   * a later resumed call would skip straight past that gap forever, since it
+   * only re-examines what's BELOW the saved position. Only safe to commit
+   * once nothing from this call's fetch was left stranded by the clock.
+   */
+  cursorAction:
+    | { type: "none" }
+    | { type: "clear" }
+    | { type: "save"; cursor: CrawlCursor }
 }
 
 /** A day is safe to build from one page's fetched data only if its whole
@@ -629,19 +643,27 @@ async function fetchPageInputs(
     }
   }
 
-  if (deep && page.fbPageId) {
-    if (convComplete && (orderComplete || !shop)) {
-      await clearCrawlCursor(page.fbPageId)
-    } else {
-      await saveCrawlCursor(page.fbPageId, {
-        conv: endConvCursor,
-        order: endOrderPage,
-        // monotonic: a frontier only ever gets deeper (smaller), never back up
-        convFrontierMs: Math.min(saved?.convFrontierMs ?? FAR_FUTURE_MS, convOldestSeenMs),
-        orderFrontierMs: Math.min(saved?.orderFrontierMs ?? FAR_FUTURE_MS, orderOldestSeenMs),
-      })
-    }
-  }
+  const cursorAction: PageInputs["cursorAction"] =
+    !deep || !page.fbPageId
+      ? { type: "none" }
+      : convComplete && (orderComplete || !shop)
+        ? { type: "clear" }
+        : {
+            type: "save",
+            cursor: {
+              conv: endConvCursor,
+              order: endOrderPage,
+              // monotonic: a frontier only ever gets deeper (smaller), never back up
+              convFrontierMs: Math.min(
+                saved?.convFrontierMs ?? FAR_FUTURE_MS,
+                convOldestSeenMs
+              ),
+              orderFrontierMs: Math.min(
+                saved?.orderFrontierMs ?? FAR_FUTURE_MS,
+                orderOldestSeenMs
+              ),
+            },
+          }
 
   return {
     page,
@@ -655,6 +677,7 @@ async function fetchPageInputs(
     convResumedFromMs,
     orderOldestSeenMs,
     orderResumedFromMs,
+    cursorAction,
   }
 }
 
@@ -757,8 +780,12 @@ export async function syncDays(
   // mid-flight with no result at all. `partial`/`processed` make this safe:
   // whatever's left is picked up by the next "Đồng bộ ngay" click.
   const out: AgentDayDoc[] = []
+  let cutShort = false
   for (const date of sorted) {
-    if (Date.now() >= routeDeadlineMs) break
+    if (Date.now() >= routeDeadlineMs) {
+      cutShort = true
+      break
+    }
     const { fromMs, toMs } = vnDayRange(date)
     // A resumed walk may have skipped re-fetching some more-recent slice
     // already covered by an earlier call — don't (re)build a day unless
@@ -770,6 +797,27 @@ export async function syncDays(
       await buildDay(date, inputs, fresh, deep ? MAX_CRAWL_DEEP : MAX_CRAWL)
     )
   }
+
+  // Only commit each page's crawl-cursor progress once every requested date
+  // has actually been dealt with (built, or correctly deemed not-yet-reached)
+  // — see `PageInputs.cursorAction`. Committing it after a clock-driven early
+  // exit would push the walk position past dates this call's OWN fetch
+  // covered but never got time to build, stranding them forever: a later
+  // resumed call only re-examines what's BELOW the saved position.
+  if (!cutShort) {
+    await Promise.all(
+      inputs.map((pi) => {
+        if (pi.cursorAction.type === "clear" && pi.page.fbPageId) {
+          return clearCrawlCursor(pi.page.fbPageId)
+        }
+        if (pi.cursorAction.type === "save" && pi.page.fbPageId) {
+          return saveCrawlCursor(pi.page.fbPageId, pi.cursorAction.cursor)
+        }
+        return undefined
+      })
+    )
+  }
+
   return out
 }
 
