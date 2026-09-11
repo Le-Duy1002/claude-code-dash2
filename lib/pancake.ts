@@ -202,33 +202,31 @@ function mapOrder(raw: Record<string, unknown>): PancakeOrder {
 
 export type OrdersSinceResult = {
   orders: PancakeOrder[]
-  /** `true` when the walk stopped (page cap or deadline) before reaching an order older than `sinceMs`. */
+  /** `true` when the walk stopped (page cap or deadline) before reaching an order older than the deepest checkpoint. */
   truncated: boolean
   /** `true` when the walk reached the very end of this shop's order history. */
   complete: boolean
   /** `page_number` to resume from — pass as `startPage` to continue this walk later. */
   endPage: number
-  /**
-   * `insertedAtMs` of the oldest order actually examined this call (`Infinity`
-   * if none). A calendar day is only safe to build from `orders` if the day's
-   * whole range is `>= oldestSeenMs` — older days simply haven't been reached
-   * yet by this call, even though nothing "older than sinceMs" was found for
-   * them (that check only fires once the walk actually gets there).
-   */
-  oldestSeenMs: number
+  /** Which of the input `checkpoints` this call structurally confirmed reaching —
+   * see `ConversationsSinceResult.reachedCheckpoints`, same idea. */
+  reachedCheckpoints: Set<number>
 }
 
 /**
- * Orders for a shop, newest first, walking pages until one is older than
- * `sinceMs` (or `maxPages`/`deadlineMs` is hit). Pancake POS returns orders
- * sorted by `inserted_at` descending, so no server-side date filter is needed.
- * `page_number` is real offset pagination, so resuming from `startPage` after
- * a truncated walk is safe: any churn (new orders inserted since) only causes
- * a little redundant re-fetching of the tail already covered, never a skip.
+ * Orders for a shop, newest first, walking pages until every checkpoint of
+ * interest is reached (or `maxPages`/`deadlineMs` is hit). Pancake POS
+ * returns orders sorted by `inserted_at` descending, so no server-side date
+ * filter is needed. `page_number` is real offset pagination, so resuming
+ * from `startPage` after a truncated walk is safe: any churn (new orders
+ * inserted since) only causes a little redundant re-fetching of the tail
+ * already covered, never a skip. See `fetchConversationsSince` for why
+ * `checkpoints` (one per boundary the caller cares about) beats a single
+ * `sinceMs`.
  */
 export async function fetchOrdersSince(
   shop: PancakeShop,
-  sinceMs: number,
+  checkpoints: number[],
   {
     pageSize = 50,
     maxPages = 40,
@@ -241,11 +239,15 @@ export async function fetchOrdersSince(
     deadlineMs?: number
   } = {}
 ): Promise<OrdersSinceResult> {
+  const sinceMs = Math.min(...checkpoints)
+  const ordered = [...new Set(checkpoints)].sort((a, b) => b - a)
+  const reachedCheckpoints = new Set<number>()
+  let nextCheckpoint = 0
+
   const out: PancakeOrder[] = []
   let truncated = true
   let complete = false
   let page = startPage
-  let oldestSeenMs = Infinity
   for (let i = 0; i < maxPages; i += 1) {
     if (Date.now() >= deadlineMs) break
     const url = new URL(`${POS_BASE}/shops/${shop.shopId}/orders`)
@@ -257,26 +259,42 @@ export async function fetchOrdersSince(
     if (rows.length === 0) {
       truncated = false
       complete = true
+      for (; nextCheckpoint < ordered.length; nextCheckpoint += 1) {
+        reachedCheckpoints.add(ordered[nextCheckpoint])
+      }
       break
     }
     page += 1
 
-    let sawOlder = false
+    let allOlder = true
+    let pageMaxInserted = -Infinity
     for (const raw of rows) {
       const order = mapOrder(raw)
-      if (order.insertedAtMs) oldestSeenMs = Math.min(oldestSeenMs, order.insertedAtMs)
+      pageMaxInserted = Math.max(pageMaxInserted, order.insertedAtMs)
       if (order.insertedAtMs && order.insertedAtMs < sinceMs) {
-        sawOlder = true
         continue
       }
+      allOlder = false
       out.push(order)
     }
-    if (sawOlder || rows.length < pageSize) {
+    while (
+      nextCheckpoint < ordered.length &&
+      pageMaxInserted < ordered[nextCheckpoint]
+    ) {
+      reachedCheckpoints.add(ordered[nextCheckpoint])
+      nextCheckpoint += 1
+    }
+    if (allOlder || rows.length < pageSize) {
       truncated = false
+      // either every checkpoint is behind us (allOlder) or there's no more
+      // data at all (short page) — either way, nothing left to confirm them against
+      for (; nextCheckpoint < ordered.length; nextCheckpoint += 1) {
+        reachedCheckpoints.add(ordered[nextCheckpoint])
+      }
       break
     }
   }
-  return { orders: out, truncated, complete, endPage: page, oldestSeenMs }
+  return { orders: out, truncated, complete, endPage: page, reachedCheckpoints }
 }
 
 // ---------------------------------------------------------------- POS: staff
@@ -380,8 +398,8 @@ export type ConversationsSinceResult = {
   conversations: PancakeConversation[]
   /**
    * `true` when the walk stopped (batch cap or deadline) without ever
-   * reaching a page entirely older than `sinceMs` — some older conversations
-   * may be missing. Resume with `startCursor: endCursor` to continue.
+   * reaching a page entirely older than the deepest checkpoint — some older
+   * conversations may be missing. Resume with `startCursor: endCursor`.
    */
   truncated: boolean
   /** `true` when the walk reached the very end of this page's conversation history. */
@@ -389,14 +407,17 @@ export type ConversationsSinceResult = {
   /** `current_count` cursor to resume from — pass as `startCursor` to continue this walk later. */
   endCursor: number
   /**
-   * The smallest `touchedAt` (= `max(updatedAtMs, lastCustomerAtMs)`) seen
-   * this call (`Infinity` if none). A calendar day is only safe to build from
-   * `conversations` once `oldestSeenMs <= that day's start` — since a
-   * conversation's `touchedAt` is always `>= lastCustomerAtMs`, this
-   * guarantees every conversation whose customer message falls on that day
-   * has actually been examined, not just "not yet reached" by the walk.
+   * Which of the input `checkpoints` this call structurally confirmed
+   * reaching: for each one, some batch was found where EVERY item's
+   * `touchedAt` was older than it — the same all-of-a-batch guarantee
+   * `truncated` uses for the single deepest checkpoint, just checked
+   * incrementally for each one as the walk passes it. This is what a
+   * calendar day needs to be safe to build from `conversations` — NOT a
+   * running min over individual timestamps (that's unsafe: pagination churn
+   * can make one item look deeper than anything actually contiguously
+   * examined, silently "confirming" a day the walk actually skipped past).
    */
-  oldestSeenMs: number
+  reachedCheckpoints: Set<number>
 }
 
 /**
@@ -405,22 +426,36 @@ export type ConversationsSinceResult = {
  * touched (bumped to the top) between calls, resuming at the same numeric
  * cursor re-reads a little of the tail already covered — it never skips
  * conversations that lie further back than the cursor.
+ *
+ * `checkpoints` are the boundaries the caller actually cares about (e.g. one
+ * per calendar day it might build) — the walk tracks, as it goes, which of
+ * them it has passed with a full batch-old-enough guarantee. Passing every
+ * requested day's boundary here (rather than just the single deepest one)
+ * is what lets a call confirm a SHALLOWER day the moment the walk reaches
+ * it, instead of only trusting the deepest target once the whole walk
+ * finishes — which would silently skip shallower days a truncated earlier
+ * call already walked past without building.
  */
 export async function fetchConversationsSince(
   fbPageId: string,
-  sinceMs: number,
+  checkpoints: number[],
   {
     maxBatches = 25,
     startCursor = 0,
     deadlineMs = Infinity,
   }: { maxBatches?: number; startCursor?: number; deadlineMs?: number } = {}
 ): Promise<ConversationsSinceResult> {
+  const sinceMs = Math.min(...checkpoints)
+  // descending: shallowest (largest) first, matching the newest-first walk
+  const ordered = [...new Set(checkpoints)].sort((a, b) => b - a)
+  const reachedCheckpoints = new Set<number>()
+  let nextCheckpoint = 0
+
   const out: PancakeConversation[] = []
   const seen = new Set<string>()
   let cursor = startCursor
   let truncated = true
   let complete = false
-  let oldestSeenMs = Infinity
 
   for (let batch = 0; batch < maxBatches; batch += 1) {
     if (Date.now() >= deadlineMs) break
@@ -434,30 +469,47 @@ export async function fetchConversationsSince(
     if (rows.length === 0) {
       truncated = false
       complete = true
+      for (; nextCheckpoint < ordered.length; nextCheckpoint += 1) {
+        reachedCheckpoints.add(ordered[nextCheckpoint])
+      }
       break
     }
     cursor += rows.length
 
     let fresh = 0
     let allOlder = true
+    let batchMaxTouched = -Infinity
     for (const raw of rows) {
       const conv = mapConversation(raw)
       if (seen.has(conv.id)) continue
       seen.add(conv.id)
       fresh += 1
       const touchedAt = Math.max(conv.updatedAtMs, conv.lastCustomerAtMs)
-      if (touchedAt) oldestSeenMs = Math.min(oldestSeenMs, touchedAt)
+      batchMaxTouched = Math.max(batchMaxTouched, touchedAt)
       if (touchedAt && touchedAt >= sinceMs) {
         allOlder = false
         out.push(conv)
       }
+    }
+    while (
+      nextCheckpoint < ordered.length &&
+      batchMaxTouched < ordered[nextCheckpoint]
+    ) {
+      reachedCheckpoints.add(ordered[nextCheckpoint])
+      nextCheckpoint += 1
     }
     if (fresh === 0 || allOlder) {
       truncated = false
       break
     }
   }
-  return { conversations: out, truncated, complete, endCursor: cursor, oldestSeenMs }
+  return {
+    conversations: out,
+    truncated,
+    complete,
+    endCursor: cursor,
+    reachedCheckpoints,
+  }
 }
 
 // ---------------------------------------------------------- INBOX: messages

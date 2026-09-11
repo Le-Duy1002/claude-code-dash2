@@ -44,13 +44,13 @@ const CANCELLED_STATUSES = new Set([11, 12, 13, 14, 15, 16])
 /** Max NEW conversations to message-crawl per shop per sync run. */
 const MAX_CRAWL = 450
 /**
- * Same cap, but for a deep (historical, >`DEEP_SYNC_THRESHOLD_DAYS`) sync. A
- * resumed deep call only ever builds ONE date (see `syncDays`), so it gets
- * the whole remaining route budget to itself — can afford a much higher cap
- * than a routine multi-day sync would. `processed`/`partial` still make this
- * incremental if even that's not enough for one unusually busy day.
+ * Same cap, but for a deep (historical, >`DEEP_SYNC_THRESHOLD_DAYS`) sync:
+ * kept small so one busy day can't eat the whole route time budget by
+ * itself, leaving room for the OTHER dates a successful deep call can build
+ * in the same pass — `processed`/`partial` already make this incremental,
+ * so the rest of a busy day's backlog is picked up by a later sync.
  */
-const MAX_CRAWL_DEEP = 300
+const MAX_CRAWL_DEEP = 40
 /** Concurrency for the message crawl (the inbox API is globally throttled). */
 const CRAWL_CONCURRENCY = 6
 /** Keep only the N most recent offending events per bucket in Firestore. */
@@ -406,36 +406,47 @@ type PageInputs = {
   orders: PancakeOrder[]
   warnings: string[]
   /**
-   * Whether this call's OWN conversation/order walk structurally confirmed
-   * reaching `rangeFromMs` (found a batch entirely older than it, or hit the
-   * true end of history) — i.e. `!truncated`. This is the only thing worth
-   * trusting as "how deep did we get": a running min over individual
-   * timestamps is NOT — Pancake's pagination isn't a clean function of
-   * calendar time (a conversation's sort key can end up out of step with
-   * its actual customer-message day), so a min-based frontier can silently
-   * overshoot deeper than anything actually contiguously examined. Once
-   * overshot there was no way back (a frontier only ever moves deeper),
-   * which is exactly what made real July conversations permanently
-   * unreachable the first time a timestamp-based frontier shipped.
+   * Which requested days' `fromMs` this call's conversation/order walk
+   * structurally confirmed reaching (see `fetchConversationsSince`'s
+   * `reachedCheckpoints` doc comment) — a day is only safe to build once
+   * it's in BOTH sets (or `orderReached` is moot for an inbox-only page).
+   * NOT a running min over individual timestamps: pagination churn can make
+   * one item look deeper than anything actually contiguously examined,
+   * silently "confirming" a day the walk actually skipped past — exactly
+   * what made real July conversations permanently unreachable the first
+   * time a timestamp-based version of this shipped.
    */
-  convReachedTarget: boolean
-  orderReachedTarget: boolean
-  /** `true` when this page's walk resumed from a saved cursor rather than
-   * starting fresh at position 0 — see `syncDays` for why that caps how
-   * many dates a call is allowed to build. */
-  resumed: boolean
+  convReached: Set<number>
+  orderReached: Set<number>
+  /**
+   * What to do with this page's persisted crawl cursor — deferred until
+   * `syncDays` knows whether the day-building loop actually got through
+   * every date it was safe to attempt this call. Applying it unconditionally
+   * would let a busy call push the walk position past dates its OWN fetch
+   * covered but never got time to build, stranding them forever: a later
+   * resumed call only re-examines what's BELOW the saved position, never
+   * back up to re-see them. Only safe to commit once nothing from this
+   * call's fetch was left stranded by the clock.
+   */
+  cursorAction:
+    | { type: "none" }
+    | { type: "clear" }
+    | { type: "save"; cursor: CrawlCursor }
 }
 
 /**
- * A page's data is trustworthy for `rangeFromMs`'s own day once this call
- * structurally confirmed reaching it. That's the only day `syncDays` will
- * ever ask to build from a RESUMED call (see there for why) — a resumed
- * call's fetch starts at a saved position with no reliable way to know its
- * chronological upper edge, so nothing shallower than that boundary date is
- * safe to build from it, no matter how deep the walk went past the target.
+ * A day is safe to build from a page's fetched data once that page's walk
+ * structurally confirmed reaching it (`fromMs` is in `convReached`, and
+ * `orderReached` too if the page has a POS shop). Each requested day is its
+ * own checkpoint (see `fetchConversationsSince`), so a call can confirm a
+ * SHALLOW day the moment the walk passes it, without waiting for the
+ * deepest requested day — important because a call that RESUMES from a
+ * saved position may already start past some days and never reach others at
+ * all; per-day confirmation is what lets it build exactly the ones it
+ * actually covered instead of all-or-nothing.
  */
-function pageReachedTarget(pi: PageInputs): boolean {
-  return pi.convReachedTarget && (!pi.shop || pi.orderReachedTarget)
+function dateReachedByPage(pi: PageInputs, fromMs: number): boolean {
+  return pi.convReached.has(fromMs) && (!pi.shop || pi.orderReached.has(fromMs))
 }
 
 /**
@@ -513,7 +524,7 @@ async function clearCrawlCursor(fbPageId: string): Promise<void> {
 
 async function fetchPageInputs(
   page: PancakePage,
-  rangeFromMs: number,
+  checkpoints: number[],
   deadlineMs: number
 ): Promise<PageInputs> {
   const warnings: string[] = []
@@ -524,6 +535,7 @@ async function fetchPageInputs(
     noReplyNeeded: new Set<number>(),
   }
   let conversations: PancakeConversation[] = []
+  const rangeFromMs = Math.min(...checkpoints)
   const daysBack = daysBackFromNow(rangeFromMs)
   const deep = daysBack > DEEP_SYNC_THRESHOLD_DAYS
 
@@ -533,10 +545,11 @@ async function fetchPageInputs(
   let endOrderPage = 1
   let convComplete = false
   let orderComplete = false
-  // true ("nothing to wait on") when there's no inbox/shop configured, so a
-  // missing token/shop can't block every date from ever being built.
-  let convReachedTarget = !hasInboxToken() || !page.fbPageId
-  let orderReachedTarget = !page.apiKey || !page.shopId
+  // Every checkpoint ("nothing to wait on") when there's no inbox/shop
+  // configured, so a missing token/shop can't block every date from ever
+  // being built.
+  let convReached = !hasInboxToken() || !page.fbPageId ? new Set(checkpoints) : new Set<number>()
+  let orderReached = !page.apiKey || !page.shopId ? new Set(checkpoints) : new Set<number>()
 
   if (hasInboxToken() && page.fbPageId) {
     try {
@@ -554,16 +567,35 @@ async function fetchPageInputs(
       warnings.push(`${page.name}: tag — ${(error as Error).message}`)
     }
     try {
-      const result = await fetchConversationsSince(page.fbPageId, rangeFromMs, {
-        // further back in time needs paging deeper to reach that day
-        maxBatches: deep ? 5000 : Math.min(600, 40 + daysBack * 4),
+      const maxBatches = deep ? 5000 : Math.min(600, 40 + daysBack * 4)
+      let result = await fetchConversationsSince(page.fbPageId, checkpoints, {
+        maxBatches,
         startCursor: saved ? saved.conv : 0,
         deadlineMs: deep ? deadlineMs : Infinity,
       })
+      // A resumed walk that reports every checkpoint reached but found
+      // NOTHING is a red flag, not a clean result: it means the saved
+      // position already sat past every day this call cares about (an
+      // earlier call walked deeper than it ever got to build), so nothing
+      // in `checkpoints` was actually examined — just trivially "older than"
+      // from the very first batch. Retrying fresh, budget permitting, is the
+      // only way to actually see that stretch again.
+      if (
+        saved &&
+        result.conversations.length === 0 &&
+        result.reachedCheckpoints.size === new Set(checkpoints).size &&
+        Date.now() < deadlineMs
+      ) {
+        result = await fetchConversationsSince(page.fbPageId, checkpoints, {
+          maxBatches,
+          startCursor: 0,
+          deadlineMs: deep ? deadlineMs : Infinity,
+        })
+      }
       conversations = result.conversations
       endConvCursor = result.endCursor
       convComplete = result.complete
-      convReachedTarget = !result.truncated
+      convReached = result.reachedCheckpoints
       if (result.truncated) {
         warnings.push(
           deep
@@ -593,16 +625,31 @@ async function fetchPageInputs(
   let orders: PancakeOrder[] = []
   if (shop) {
     try {
-      const result = await fetchOrdersSince(shop, rangeFromMs, {
+      const maxPages = deep ? 5000 : Math.min(600, 40 + daysBack * 4)
+      let result = await fetchOrdersSince(shop, checkpoints, {
         pageSize: 100,
-        maxPages: deep ? 5000 : Math.min(600, 40 + daysBack * 4),
+        maxPages,
         startPage: saved ? saved.order : 1,
         deadlineMs: deep ? deadlineMs : Infinity,
       })
+      // Same red-flag retry as conversations above.
+      if (
+        saved &&
+        result.orders.length === 0 &&
+        result.reachedCheckpoints.size === new Set(checkpoints).size &&
+        Date.now() < deadlineMs
+      ) {
+        result = await fetchOrdersSince(shop, checkpoints, {
+          pageSize: 100,
+          maxPages,
+          startPage: 1,
+          deadlineMs: deep ? deadlineMs : Infinity,
+        })
+      }
       orders = result.orders
       endOrderPage = result.endPage
       orderComplete = result.complete
-      orderReachedTarget = !result.truncated
+      orderReached = result.reachedCheckpoints
       if (result.truncated) {
         warnings.push(
           deep
@@ -615,20 +662,22 @@ async function fetchPageInputs(
     }
   }
 
-  // The raw walk position is always safe to persist immediately — resuming
-  // from it never skips anything (see `loadCrawlCursor`'s doc comment), so
-  // unlike the old chronological frontier this doesn't need to wait on
-  // whether `syncDays`'s day-building loop actually got to run.
-  if (deep && page.fbPageId) {
-    if (convComplete && (orderComplete || !shop)) {
-      await clearCrawlCursor(page.fbPageId)
-    } else {
-      await saveCrawlCursor(page.fbPageId, {
-        conv: endConvCursor,
-        order: endOrderPage,
-      })
-    }
-  }
+  // The raw walk position is always safe to RESUME from — resuming never
+  // skips anything (see `loadCrawlCursor`'s doc comment). But committing it
+  // is deferred to `syncDays`, which knows whether the day-building loop
+  // actually got through every date it was safe to attempt this call: if a
+  // busy call's clock ran out partway, the dates it left unattempted are
+  // only reachable through THIS call's own fetch (which started wherever
+  // the walk resumed from) — advancing the saved position past that would
+  // make them permanently unreachable (a later resumed call only ever
+  // starts DEEPER, never back up to re-see them). Left uncommitted, the
+  // next call simply re-walks the same stretch fresh and gets another shot.
+  const cursorAction: PageInputs["cursorAction"] =
+    !deep || !page.fbPageId
+      ? { type: "none" }
+      : convComplete && (orderComplete || !shop)
+        ? { type: "clear" }
+        : { type: "save", cursor: { conv: endConvCursor, order: endOrderPage } }
 
   return {
     page,
@@ -638,9 +687,9 @@ async function fetchPageInputs(
     convTags,
     orders,
     warnings,
-    convReachedTarget,
-    orderReachedTarget,
-    resumed: saved != null,
+    convReached,
+    orderReached,
+    cursorAction,
   }
 }
 
@@ -729,9 +778,9 @@ export async function syncDays(
   const deep =
     daysBackFromNow(vnDayRange(sorted[0]).fromMs) > DEEP_SYNC_THRESHOLD_DAYS
 
-  // Deep syncs proceed one confirmed date at a time (see below) — retarget
-  // to whichever requested date still needs it instead of re-attempting
-  // ones an earlier call already built.
+  // Skip dates an earlier call already built — no reason to re-attempt them,
+  // and no reason to make this call's walk confirm a checkpoint it doesn't
+  // need to.
   let pending = sorted
   if (deep && !fresh) {
     const refs = sorted.map((d) =>
@@ -742,37 +791,50 @@ export async function syncDays(
   }
   if (pending.length === 0) return []
 
+  // One checkpoint per still-needed day — see `fetchConversationsSince` for
+  // why this (not a single deepest `sinceMs`) is what lets a call confirm a
+  // shallower day the moment its walk passes it, instead of all-or-nothing
+  // on the single deepest requested day.
+  const checkpoints = pending.map((d) => vnDayRange(d).fromMs)
   const pages = pancakePages()
-  const rangeFromMs = vnDayRange(pending[0]).fromMs
   const startedAt = Date.now()
   const phase1DeadlineMs = startedAt + CRAWL_TIME_BUDGET_MS
   const routeDeadlineMs = startedAt + ROUTE_TIME_BUDGET_MS
   const inputs = await Promise.all(
-    pages.map((page) => fetchPageInputs(page, rangeFromMs, phase1DeadlineMs))
+    pages.map((page) => fetchPageInputs(page, checkpoints, phase1DeadlineMs))
   )
 
-  // A call that resumed a saved walk position has no reliable way to know
-  // its chronological upper edge (see `PageInputs.convReachedTarget`), so it
-  // only ever builds `rangeFromMs`'s own day — the one date structurally
-  // guaranteed covered by walking contiguously from that position down past
-  // the target. A fresh (position-0) call has no such limit: its fetch is
-  // contiguous from right now, so once it reaches the target every
-  // requested date is safe to build (bounded by the route's time budget
-  // below, same as a routine sync). Slower for a deep backlog — one date
-  // per resumed call — but never silently wrong.
-  const resumedThisCall = deep && inputs.some((pi) => pi.resumed)
-  const buildable = resumedThisCall ? pending.slice(0, 1) : pending
-  const reached = !deep || inputs.every((pi) => pageReachedTarget(pi))
-
   const out: AgentDayDoc[] = []
-  if (reached) {
-    for (const date of buildable) {
-      if (Date.now() >= routeDeadlineMs) break
-      out.push(
-        await buildDay(date, inputs, fresh, deep ? MAX_CRAWL_DEEP : MAX_CRAWL)
-      )
+  let cutShort = false
+  for (const date of pending) {
+    if (Date.now() >= routeDeadlineMs) {
+      cutShort = true
+      break
     }
+    const { fromMs } = vnDayRange(date)
+    if (!inputs.every((pi) => dateReachedByPage(pi, fromMs))) continue
+    out.push(
+      await buildDay(date, inputs, fresh, deep ? MAX_CRAWL_DEEP : MAX_CRAWL)
+    )
   }
+
+  // Only commit each page's crawl-cursor progress once this call's fetch has
+  // been fully used up (every date it covered either got built, or there
+  // was nothing left to build) — see `PageInputs.cursorAction`.
+  if (!cutShort) {
+    await Promise.all(
+      inputs.map((pi) => {
+        if (pi.cursorAction.type === "clear" && pi.page.fbPageId) {
+          return clearCrawlCursor(pi.page.fbPageId)
+        }
+        if (pi.cursorAction.type === "save" && pi.page.fbPageId) {
+          return saveCrawlCursor(pi.page.fbPageId, pi.cursorAction.cursor)
+        }
+        return undefined
+      })
+    )
+  }
+
   return out
 }
 
