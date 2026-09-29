@@ -16,10 +16,12 @@ import { db } from "@/lib/firebase"
 import {
   SHIFT_DEFS,
   WEEKDAY_LABELS,
+  formatHourRanges,
   getCell,
   mapScheduleWeek,
   staffName,
   weekEndDate,
+  type CoverSlot,
   type OvertimeEntry,
   type ScheduleChange,
   type ScheduleChangeKind,
@@ -167,10 +169,10 @@ export async function setCell(
       status: week.status,
       grid: {
         [dayIndex]: {
-          // clearing a cell also wipes its note / swap flag
+          // clearing a cell also wipes its note / swap flag / cover
           [shift]: staffKey
             ? { staff: staffKey }
-            : { staff: null, note: null, excludeFromScore: null },
+            : { staff: null, note: null, excludeFromScore: null, cover: null },
         },
       },
     },
@@ -197,23 +199,39 @@ export async function setCell(
   await batch.commit()
 }
 
-/** Set the note / "đổi ca" flag on one cell. */
+/**
+ * Set the note / "đổi ca" flag / cover hours on one cell. `cover` is dropped
+ * unless the cell is flagged "đổi ca".
+ */
 export async function setCellNote(
   week: ScheduleWeek,
   dayIndex: number,
   shift: ShiftId,
   note: string,
   excludeFromScore: boolean,
+  cover: CoverSlot[],
   actor: Actor,
   reason?: string | null
 ): Promise<void> {
   const current = getCell(week, dayIndex, shift)
+  const nextCover = excludeFromScore ? cover : []
   if (
     (current.note ?? "") === note &&
-    Boolean(current.excludeFromScore) === excludeFromScore
+    Boolean(current.excludeFromScore) === excludeFromScore &&
+    JSON.stringify(current.cover ?? []) === JSON.stringify(nextCover)
   ) {
     return
   }
+
+  const coverText = nextCover
+    .map((c) => `${staffName(c.staff)} ${formatHourRanges(c.hours)}`)
+    .join(", ")
+  const parts = [
+    excludeFromScore
+      ? `đổi ca${coverText ? ` — ${coverText} trực hộ` : ""}`
+      : null,
+    note ? `ghi chú "${note.slice(0, 60)}"` : null,
+  ].filter(Boolean)
 
   const batch = writeBatch(db)
   batch.set(
@@ -226,6 +244,8 @@ export async function setCellNote(
           [shift]: {
             note: note || null,
             excludeFromScore: excludeFromScore || null,
+            // an array replaces wholesale under merge, unlike a nested map
+            cover: nextCover.length ? nextCover : null,
           },
         },
       },
@@ -236,8 +256,8 @@ export async function setCellNote(
     kind: "note",
     staffKey: current.staff,
     summary: `${slot(dayIndex, shift)}: ${
-      excludeFromScore ? "đánh dấu đổi ca — " : ""
-    }${note ? `ghi chú "${note.slice(0, 60)}"` : "xoá ghi chú"}`,
+      parts.join("; ") || "xoá ghi chú / đổi ca"
+    }`,
     reason,
   })
   await batch.commit()

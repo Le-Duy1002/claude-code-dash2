@@ -6,10 +6,15 @@ import {
   CheckIcon,
   LockIcon,
   MessageSquareTextIcon,
+  MoonIcon,
   PencilIcon,
   PlusIcon,
   RepeatIcon,
+  SunIcon,
+  SunsetIcon,
   UnlockIcon,
+  XIcon,
+  type LucideIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -50,10 +55,15 @@ import {
   SHIFT_IDS,
   WEEKDAY_LABELS,
   WEEKDAY_SHORT,
+  coverByHour,
+  coverFromHours,
+  formatHourRanges,
   formatHours,
   getCell,
   registeredHours,
+  shiftHourSlots,
   staffName,
+  todayIso,
   weekDates,
   weekEndDate,
   weekLabel,
@@ -61,18 +71,74 @@ import {
   type ShiftId,
 } from "../types"
 
-const NONE = "__none__"
-const CELL_OPTIONS = [
-  { value: NONE, label: "— trống —" },
-  ...SCHEDULE_STAFF.map((s) => ({ value: s.key, label: s.name })),
-]
+// An empty cell has value `null` and shows nothing; the "clear" item is only
+// offered once someone is assigned.
+const CLEAR = "__clear__"
+const STAFF_OPTIONS = SCHEDULE_STAFF.map((s) => ({ value: s.key, label: s.name }))
+const FILLED_OPTIONS = [{ value: CLEAR, label: "Bỏ chọn" }, ...STAFF_OPTIONS]
 const HOUR_CHOICES = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+// Class strings are spelled out in full so Tailwind can see them.
+type Tone = { chip: string; dot: string }
+const STAFF_TONES: Tone[] = [
+  {
+    chip: "border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100 dark:border-sky-700 dark:bg-sky-500/15 dark:text-sky-200 dark:hover:bg-sky-500/25",
+    dot: "bg-sky-500",
+  },
+  {
+    chip: "border-violet-300 bg-violet-50 text-violet-800 hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-500/15 dark:text-violet-200 dark:hover:bg-violet-500/25",
+    dot: "bg-violet-500",
+  },
+  {
+    chip: "border-pink-300 bg-pink-50 text-pink-800 hover:bg-pink-100 dark:border-pink-700 dark:bg-pink-500/15 dark:text-pink-200 dark:hover:bg-pink-500/25",
+    dot: "bg-pink-500",
+  },
+  {
+    chip: "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200 dark:hover:bg-emerald-500/25",
+    dot: "bg-emerald-500",
+  },
+  {
+    chip: "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100 dark:border-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-200 dark:hover:bg-cyan-500/25",
+    dot: "bg-cyan-500",
+  },
+  {
+    chip: "border-lime-300 bg-lime-50 text-lime-800 hover:bg-lime-100 dark:border-lime-700 dark:bg-lime-500/15 dark:text-lime-200 dark:hover:bg-lime-500/25",
+    dot: "bg-lime-500",
+  },
+]
+const NEUTRAL_TONE: Tone = { chip: "bg-muted", dot: "bg-muted-foreground" }
+const STAFF_TONE = new Map(
+  SCHEDULE_STAFF.map((s, i) => [s.key, STAFF_TONES[i % STAFF_TONES.length]])
+)
+
+function staffTone(key: string): Tone {
+  return STAFF_TONE.get(key) ?? NEUTRAL_TONE
+}
+
+const SHIFT_TONES: Record<ShiftId, { Icon: LucideIcon; badge: string }> = {
+  sang: {
+    Icon: SunIcon,
+    badge:
+      "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
+  },
+  chieu: {
+    Icon: SunsetIcon,
+    badge:
+      "bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300",
+  },
+  toi: {
+    Icon: MoonIcon,
+    badge:
+      "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300",
+  },
+}
 
 const POPUP_CLASS =
   "z-50 rounded-lg border bg-popover p-2 text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95"
 
 export function WeekGrid({ week, actor }: { week: ScheduleWeek; actor: Actor }) {
   const dates = weekDates(week.weekId)
+  const today = todayIso()
   const locked = week.status === "locked"
 
   // locked-week edit mode: status stays "locked" (so changes log as after-lock),
@@ -89,12 +155,24 @@ export function WeekGrid({ week, actor }: { week: ScheduleWeek; actor: Actor }) 
 
 
   return (
-    <div className="overflow-hidden rounded-lg border">
+    <div className="overflow-hidden rounded-lg border shadow-xs">
       {/* header */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
+      <div
+        className={cn(
+          "flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2",
+          locked ? "bg-emerald-50 dark:bg-emerald-500/10" : "bg-muted/40"
+        )}
+      >
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium">{weekLabel(week.weekId)}</span>
-          <Badge variant={locked ? "default" : "outline"}>
+          <span className="text-sm font-semibold">
+            {weekLabel(week.weekId)}
+          </span>
+          <Badge
+            variant={locked ? "default" : "outline"}
+            className={cn(
+              locked && "bg-emerald-600 text-white dark:bg-emerald-500"
+            )}
+          >
             {locked ? (
               <>
                 <LockIcon /> Đã chốt
@@ -126,59 +204,101 @@ export function WeekGrid({ week, actor }: { week: ScheduleWeek; actor: Actor }) 
 
       {/* grid */}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[720px] border-collapse text-sm">
+        <table className="w-full min-w-[760px] border-collapse text-sm">
           <thead>
-            <tr className="[&>th]:border-b [&>th]:px-2 [&>th]:py-1.5 [&>th]:text-center [&>th]:font-medium">
-              <th className="w-24 text-left">Ca</th>
-              {dates.map((date, i) => (
-                <th key={i}>
-                  <div>{WEEKDAY_LABELS[i]}</div>
-                  <div className="text-xs font-normal text-muted-foreground">
-                    {date.slice(8)}/{date.slice(5, 7)}
-                  </div>
-                </th>
-              ))}
+            <tr className="border-b bg-muted/50">
+              <th className="w-32 px-3 py-2 text-left text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                Ca
+              </th>
+              {dates.map((date, i) => {
+                const isToday = date === today
+                return (
+                  <th
+                    key={i}
+                    className={cn(
+                      "border-l px-2 py-1.5 text-center font-medium",
+                      isToday && "bg-primary/5"
+                    )}
+                  >
+                    <div>{WEEKDAY_LABELS[i]}</div>
+                    <div
+                      className={cn(
+                        "mt-0.5 inline-flex h-5 items-center rounded-full px-2 text-xs font-normal text-muted-foreground tabular-nums",
+                        isToday && "bg-primary font-medium text-primary-foreground"
+                      )}
+                    >
+                      {date.slice(8)}/{date.slice(5, 7)}
+                    </div>
+                  </th>
+                )
+              })}
             </tr>
           </thead>
           <tbody>
-            {SHIFT_IDS.map((shift) => (
-              <tr
-                key={shift}
-                className="[&>td]:border-b [&>td]:px-1.5 [&>td]:py-1 last:[&>td]:border-b-0"
-              >
-                <td className="!px-2 text-left align-middle">
-                  <div className="font-medium">{SHIFT_DEFS[shift].label}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {SHIFT_DEFS[shift].range}
-                  </div>
-                </td>
-                {dates.map((_, dayIndex) => (
-                  <td key={dayIndex} className="text-center align-middle">
-                    <ShiftCell
-                      week={week}
-                      dayIndex={dayIndex}
-                      shift={shift}
-                      editable={editable}
-                      actor={actor}
-                      reason={changeReason}
-                    />
+            {SHIFT_IDS.map((shift) => {
+              const { Icon, badge } = SHIFT_TONES[shift]
+              return (
+                <tr key={shift} className="border-b last:border-b-0">
+                  <td className="px-3 py-2 align-middle">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          "flex size-8 shrink-0 items-center justify-center rounded-md",
+                          badge
+                        )}
+                      >
+                        <Icon className="size-4" />
+                      </span>
+                      <div>
+                        <div className="font-medium">
+                          {SHIFT_DEFS[shift].label}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {SHIFT_DEFS[shift].range}
+                        </div>
+                      </div>
+                    </div>
                   </td>
-                ))}
-              </tr>
-            ))}
+                  {dates.map((date, dayIndex) => (
+                    <td
+                      key={dayIndex}
+                      className={cn(
+                        "border-l px-1.5 py-1.5 text-center align-middle",
+                        date === today && "bg-primary/[0.03]"
+                      )}
+                    >
+                      <ShiftCell
+                        week={week}
+                        dayIndex={dayIndex}
+                        shift={shift}
+                        editable={editable}
+                        actor={actor}
+                        reason={changeReason}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
 
       {/* per-week hours */}
-      <div className="flex flex-wrap gap-x-3 gap-y-1 border-t px-3 py-1.5 text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">Giờ đăng ký tuần:</span>
         {SCHEDULE_STAFF.map((s) => {
           const h = hours[s.key]
           const total = (h?.shiftHours ?? 0) + (h?.overtimeHours ?? 0)
           return (
-            <span key={s.key}>
-              {s.name} <span className="tabular-nums">{formatHours(total)}</span>
+            <span key={s.key} className="inline-flex items-center gap-1.5">
+              <span
+                className={cn("size-2 rounded-full", staffTone(s.key).dot)}
+              />
+              {s.name}{" "}
+              <span className="font-medium text-foreground tabular-nums">
+                {formatHours(total)}
+              </span>
               {h?.overtimeHours ? (
                 <span className="text-amber-600 dark:text-amber-400">
                   {" "}
@@ -239,11 +359,15 @@ function ShiftCell({
   const [excludeDraft, setExcludeDraft] = React.useState(
     Boolean(cell.excludeFromScore)
   )
+  const [coverDraft, setCoverDraft] = React.useState(() =>
+    coverByHour(cell.cover)
+  )
 
   React.useEffect(() => {
     if (noteOpen) {
       setNoteDraft(cell.note ?? "")
       setExcludeDraft(Boolean(cell.excludeFromScore))
+      setCoverDraft(coverByHour(cell.cover))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteOpen])
@@ -264,6 +388,7 @@ function ShiftCell({
         shift,
         noteDraft.trim(),
         excludeDraft,
+        coverFromHours(coverDraft),
         actor,
         reason
       )
@@ -273,23 +398,45 @@ function ShiftCell({
     }
   }
 
+  const covers = cell.excludeFromScore ? (cell.cover ?? []) : []
   const marker =
     cell.note || cell.excludeFromScore ? (
-      <span
-        className="block truncate px-1 text-[0.65rem] text-amber-600 dark:text-amber-400"
-        title={cell.note || "Ca đổi/nhờ người"}
-      >
-        {cell.excludeFromScore ? "⇄ đổi ca " : ""}
-        {cell.note}
-      </span>
+      <div className="flex flex-col items-center px-1 text-[0.65rem] leading-tight text-amber-600 dark:text-amber-400">
+        {cell.excludeFromScore && covers.length === 0 ? (
+          <span>⇄ đổi ca</span>
+        ) : null}
+        {covers.map((c) => (
+          <span
+            key={c.staff}
+            className="inline-flex items-center gap-1 whitespace-nowrap"
+            title={`${staffName(c.staff)} trực hộ ${formatHourRanges(c.hours)}`}
+          >
+            ⇄
+            <span className={cn("size-1.5 rounded-full", staffTone(c.staff).dot)} />
+            {staffName(c.staff)} {formatHourRanges(c.hours)}
+          </span>
+        ))}
+        {cell.note ? (
+          <span className="block max-w-full truncate" title={cell.note}>
+            {cell.note}
+          </span>
+        ) : null}
+      </div>
     ) : null
 
   if (!editable) {
     return (
-      <div className="flex flex-col items-center gap-0.5 px-1 py-0.5">
-        <span className={cn("text-sm", !cell.staff && "text-muted-foreground")}>
-          {cell.staff ? staffName(cell.staff) : "—"}
-        </span>
+      <div className="flex min-h-7 flex-col items-center justify-center gap-0.5 px-1 py-0.5">
+        {cell.staff ? (
+          <span
+            className={cn(
+              "rounded-md border px-2.5 py-0.5 text-sm font-medium",
+              staffTone(cell.staff).chip
+            )}
+          >
+            {staffName(cell.staff)}
+          </span>
+        ) : null}
         {marker}
       </div>
     )
@@ -299,24 +446,37 @@ function ShiftCell({
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center gap-0.5">
         <Select
-          items={CELL_OPTIONS}
-          value={cell.staff ?? NONE}
-          onValueChange={(v) => commitStaff(!v || v === NONE ? null : v)}
+          items={cell.staff ? FILLED_OPTIONS : STAFF_OPTIONS}
+          value={cell.staff}
+          onValueChange={(v) => commitStaff(!v || v === CLEAR ? null : v)}
         >
           <SelectTrigger
             size="sm"
             className={cn(
-              "w-full min-w-[5rem] justify-center",
-              !cell.staff && "text-muted-foreground"
+              "w-full min-w-[5rem]",
+              cell.staff
+                ? cn("font-medium", staffTone(cell.staff).chip)
+                : "border-dashed dark:bg-transparent [&_svg]:opacity-40 hover:[&_svg]:opacity-100 hover:bg-muted/60"
             )}
           >
-            <SelectValue />
+            <SelectValue className="justify-center">
+              {(v: string | null) => (v ? staffName(v) : null)}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
-              {CELL_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
+              {cell.staff ? (
+                <SelectItem value={CLEAR} className="text-muted-foreground">
+                  <XIcon />
+                  Bỏ chọn
+                </SelectItem>
+              ) : null}
+              {SCHEDULE_STAFF.map((s) => (
+                <SelectItem key={s.key} value={s.key}>
+                  <span
+                    className={cn("size-2 rounded-full", staffTone(s.key).dot)}
+                  />
+                  {s.name}
                 </SelectItem>
               ))}
             </SelectGroup>
@@ -332,7 +492,7 @@ function ShiftCell({
                   "shrink-0",
                   cell.note || cell.excludeFromScore
                     ? "text-amber-600 dark:text-amber-400"
-                    : "text-muted-foreground"
+                    : "text-muted-foreground/50 hover:text-foreground"
                 )}
               />
             }
@@ -345,18 +505,13 @@ function ShiftCell({
           </Popover.Trigger>
           <Popover.Portal>
             <Popover.Positioner sideOffset={4} align="end" className="z-50">
-              <Popover.Popup className="z-50 w-64 rounded-lg border bg-popover p-3 text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95">
-                <p className="mb-1.5 text-xs font-medium">
-                  Ghi chú {SHIFT_DEFS[shift].label} · {WEEKDAY_LABELS[dayIndex]}
-                </p>
-                <Textarea
-                  value={noteDraft}
-                  onChange={(e) => setNoteDraft(e.target.value)}
-                  rows={2}
-                  placeholder="VD: Hà trực hộ 3h"
-                  className="text-sm"
+              <Popover.Popup className="z-50 w-80 rounded-lg border bg-popover p-3 text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95">
+                <ShiftHeading
+                  shift={shift}
+                  dayIndex={dayIndex}
+                  staff={cell.staff}
                 />
-                <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs">
+                <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs">
                   <Checkbox
                     checked={excludeDraft}
                     onCheckedChange={(c) => setExcludeDraft(c === true)}
@@ -367,6 +522,21 @@ function ShiftCell({
                     1 (Đủ giờ ca) &amp; 2 (Vào ca)
                   </span>
                 </label>
+                {excludeDraft ? (
+                  <CoverPicker
+                    shift={shift}
+                    owner={cell.staff}
+                    value={coverDraft}
+                    onChange={setCoverDraft}
+                  />
+                ) : null}
+                <Textarea
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  rows={2}
+                  placeholder="Ghi chú thêm (không bắt buộc)"
+                  className="mt-3 min-h-0 text-sm"
+                />
                 <div className="mt-2 flex justify-end gap-1.5">
                   <Button
                     size="sm"
@@ -385,6 +555,171 @@ function ShiftCell({
         </Popover.Root>
       </div>
       {marker}
+    </div>
+  )
+}
+
+function ShiftHeading({
+  shift,
+  dayIndex,
+  staff,
+}: {
+  shift: ShiftId
+  dayIndex: number
+  staff: string | null
+}) {
+  const { Icon, badge } = SHIFT_TONES[shift]
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        className={cn(
+          "flex size-8 shrink-0 items-center justify-center rounded-md",
+          badge
+        )}
+      >
+        <Icon className="size-4" />
+      </span>
+      <div className="min-w-0">
+        <p className="text-sm font-medium">
+          Ca {SHIFT_DEFS[shift].label.toLowerCase()} · {WEEKDAY_LABELS[dayIndex]}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {SHIFT_DEFS[shift].range}
+          {staff ? ` · ${staffName(staff)} đăng ký` : ""}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Pick who covered the shift, then tick the hours they covered (Shift-click
+ * fills a range from the last clicked hour). Hours map to one person each, so
+ * several people can split a shift.
+ */
+function CoverPicker({
+  shift,
+  owner,
+  value,
+  onChange,
+}: {
+  shift: ShiftId
+  owner: string | null
+  value: Record<number, string>
+  onChange: (next: Record<number, string>) => void
+}) {
+  const people = SCHEDULE_STAFF.filter((s) => s.key !== owner)
+  const slots = shiftHourSlots(shift)
+  const [active, setActive] = React.useState<string | null>(
+    () => Object.values(value)[0] ?? null
+  )
+  const anchorRef = React.useRef<number | null>(null)
+
+  function pick(hour: number, extend: boolean) {
+    if (!active) return
+    const next = { ...value }
+    if (extend && anchorRef.current !== null) {
+      const lo = Math.min(anchorRef.current, hour)
+      const hi = Math.max(anchorRef.current, hour)
+      for (let h = lo; h <= hi; h += 1) next[h] = active
+    } else {
+      if (next[hour] === active) delete next[hour]
+      else next[hour] = active
+    }
+    anchorRef.current = hour
+    onChange(next)
+  }
+
+  function fillAll() {
+    if (!active) return
+    onChange(Object.fromEntries(slots.map((h) => [h, active])))
+  }
+
+  const summary = coverFromHours(value)
+
+  return (
+    <div className="mt-2 flex flex-col gap-2.5 rounded-md border bg-muted/30 p-2.5">
+      <div>
+        <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+          Người trực hộ
+        </p>
+        <div className="flex flex-wrap gap-1">
+          {people.map((s) => (
+            <button
+              key={s.key}
+              type="button"
+              onClick={() => setActive(s.key)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors",
+                active === s.key
+                  ? cn(staffTone(s.key).chip, "ring-2 ring-foreground/25")
+                  : "bg-background hover:bg-accent"
+              )}
+            >
+              <span className={cn("size-2 rounded-full", staffTone(s.key).dot)} />
+              {s.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {active ? (
+        <div>
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <p className="text-xs font-medium text-muted-foreground">
+              Giờ {staffName(active)} trực{" "}
+              <span className="font-normal">(Shift để chọn dãy)</span>
+            </p>
+            <button
+              type="button"
+              onClick={fillAll}
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              Cả ca
+            </button>
+          </div>
+          <div className="grid grid-cols-6 gap-1">
+            {slots.map((h) => {
+              const who = value[h]
+              return (
+                <button
+                  key={h}
+                  type="button"
+                  onClick={(e) => pick(h, e.shiftKey)}
+                  title={`${h}:00–${h + 1}:00${who ? ` · ${staffName(who)}` : ""}`}
+                  className={cn(
+                    "flex h-10 flex-col items-center justify-center rounded-md border text-xs tabular-nums transition-colors select-none",
+                    who
+                      ? staffTone(who).chip
+                      : "border-dashed bg-background text-muted-foreground hover:bg-accent"
+                  )}
+                >
+                  <span className="font-medium">
+                    {h}–{h + 1}
+                  </span>
+                  {who ? (
+                    <span className="text-[0.6rem] leading-none">
+                      {staffName(who)}
+                    </span>
+                  ) : null}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Chọn người trực hộ để đánh dấu giờ.
+        </p>
+      )}
+
+      {summary.length ? (
+        <p className="text-xs">
+          {summary
+            .map((c) => `${staffName(c.staff)} ${formatHourRanges(c.hours)}`)
+            .join(" · ")}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -603,12 +938,14 @@ function HoursGrid({
 function OvertimeChip({
   dayIndex,
   hours,
+  tone,
   editable,
   onSet,
   onRemove,
 }: {
   dayIndex: number
   hours: number
+  tone: Tone
   editable: boolean
   onSet: (hours: number) => void
   onRemove: () => void
@@ -617,7 +954,11 @@ function OvertimeChip({
   const label = `${WEEKDAY_SHORT[dayIndex]} · ${hours}h`
 
   if (!editable) {
-    return <Badge variant="secondary">{label}</Badge>
+    return (
+      <Badge variant="outline" className={tone.chip}>
+        {label}
+      </Badge>
+    )
   }
 
   return (
@@ -626,7 +967,10 @@ function OvertimeChip({
         render={
           <button
             type="button"
-            className="inline-flex items-center rounded-md border bg-secondary px-1.5 py-0.5 text-xs font-medium text-secondary-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            className={cn(
+              "inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium transition-colors",
+              tone.chip
+            )}
           />
         }
       >
@@ -888,12 +1232,18 @@ function OvertimeEditor({
             .sort((a, b) => a.dayIndex - b.dayIndex)
           return (
             <li key={s.key} className="flex flex-wrap items-center gap-1">
-              <span className="w-12 shrink-0 text-sm font-medium">{s.name}</span>
+              <span className="flex w-16 shrink-0 items-center gap-1.5 text-sm font-medium">
+                <span
+                  className={cn("size-2 rounded-full", staffTone(s.key).dot)}
+                />
+                {s.name}
+              </span>
               {mine.map((e) => (
                 <OvertimeChip
                   key={e.dayIndex}
                   dayIndex={e.dayIndex}
                   hours={e.hours}
+                  tone={staffTone(s.key)}
                   editable={editable}
                   onSet={(h) => applyRows(s.key, [{ dayIndex: e.dayIndex, hours: h }])}
                   onRemove={() =>

@@ -177,16 +177,78 @@ export function weekIdsForDates(dates: string[]): string[] {
 
 // ------------------------------------------------------------ the grid
 
+/** Someone working part of a shift in place of the registered staff ("trực hộ"). */
+export type CoverSlot = {
+  staff: string
+  /** covered 1-hour slots, each by its start hour (13 = 13:00–14:00), ascending */
+  hours: number[]
+}
+
 /** One cell of the grid: who works it, plus an optional note. */
 export type ScheduleCell = {
   staff: string | null
-  /** free note on the cell, e.g. "Hà trực hộ 3h" */
+  /** free note on the cell */
   note?: string
   /**
    * The shift was swapped / covered by someone else — exclude it from
    * criteria 1 (Đủ giờ ca) & 2 (Vào ca). The manager reviews it by hand.
    */
   excludeFromScore?: boolean
+  /** who covered which hours; only meaningful with `excludeFromScore` */
+  cover?: CoverSlot[]
+}
+
+/** Start hours of each 1-hour slot in a shift (Chiều → 13…18). */
+export function shiftHourSlots(shift: ShiftId): number[] {
+  const { startHour, endHour } = SHIFT_DEFS[shift]
+  return Array.from({ length: endHour - startHour }, (_, i) => startHour + i)
+}
+
+/** `[13, 14, 15, 17]` → `"13–16h, 17–18h"`. */
+export function formatHourRanges(hours: number[]): string {
+  const sorted = [...hours].sort((a, b) => a - b)
+  const parts: string[] = []
+  let start = sorted[0]
+  for (let i = 0; i < sorted.length; i += 1) {
+    const h = sorted[i]
+    if (sorted[i + 1] !== h + 1) {
+      parts.push(`${start}–${h + 1}h`)
+      start = sorted[i + 1]
+    }
+  }
+  return parts.join(", ")
+}
+
+/** `CoverSlot[]` → `{ hour: staffKey }`. */
+export function coverByHour(cover: CoverSlot[] | undefined): Record<number, string> {
+  const out: Record<number, string> = {}
+  for (const c of cover ?? []) for (const h of c.hours) out[h] = c.staff
+  return out
+}
+
+/** `{ hour: staffKey }` → `CoverSlot[]`, ordered by each person's first hour. */
+export function coverFromHours(byHour: Record<number, string>): CoverSlot[] {
+  const map = new Map<string, number[]>()
+  const hours = Object.keys(byHour)
+    .map(Number)
+    .sort((a, b) => a - b)
+  for (const h of hours) {
+    const staff = byHour[h]
+    if (!map.has(staff)) map.set(staff, [])
+    map.get(staff)!.push(h)
+  }
+  return [...map].map(([staff, hrs]) => ({ staff, hours: hrs }))
+}
+
+function normalizeCover(value: unknown): CoverSlot[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: CoverSlot[] = []
+  for (const c of value as Partial<CoverSlot>[]) {
+    if (!c || typeof c.staff !== "string" || !Array.isArray(c.hours)) continue
+    const hours = c.hours.filter(Number.isInteger).sort((a, b) => a - b)
+    if (hours.length) out.push({ staff: c.staff, hours })
+  }
+  return out.length ? out : undefined
 }
 
 /** shiftId → cell. A bare string is the legacy shape (staff key only). */
@@ -203,6 +265,7 @@ export function normalizeCell(value: ScheduleCell | string | null | undefined): 
     staff: value.staff ?? null,
     note: value.note || undefined,
     excludeFromScore: value.excludeFromScore || undefined,
+    cover: normalizeCover(value.cover),
   }
 }
 
