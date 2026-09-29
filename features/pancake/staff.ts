@@ -67,6 +67,10 @@ for (const member of STAFF) {
   for (const fbId of member.fbIds) BY_FBID.set(fbId, member)
 }
 
+export function staffByKey(key: string | null | undefined): StaffMember | null {
+  return (key && STAFF.find((s) => s.key === key)) || null
+}
+
 export function staffByUid(uid: string | null | undefined): StaffMember | null {
   if (!uid) return null
   return BY_UID.get(uid) ?? null

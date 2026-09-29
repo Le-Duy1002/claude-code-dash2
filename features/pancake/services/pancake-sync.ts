@@ -5,6 +5,17 @@ import { deflateRawSync, inflateRawSync } from "node:zlib"
 
 import { FieldValue } from "firebase-admin/firestore"
 
+import {
+  addDays,
+  coverByHour,
+  getCell,
+  isoFromDate,
+  mapScheduleWeek,
+  mondayOf,
+  weekIdsForDates,
+  weekdayMon0,
+  type ScheduleWeek,
+} from "@/features/schedule/types"
 import { adminDb } from "@/lib/firebase-admin"
 import {
   fetchConversationsSince,
@@ -18,6 +29,13 @@ import {
   type PancakePage,
   type PancakeShop,
 } from "@/lib/pancake"
+import {
+  gradeConversation,
+  shiftSpanAt,
+  type GradedMessage,
+  type OnDuty,
+  type StaffReply,
+} from "../reply-grading"
 import { seenStaffByFbId, staffByUid } from "../staff"
 import {
   NO_REPLY_NEEDED_TAGS,
@@ -148,7 +166,9 @@ async function syncShopInbox(
   conversations: PancakeConversation[],
   maxCrawl: number = MAX_CRAWL,
   /** stop starting new message crawls past this; the rest wait for the next sync */
-  deadlineMs: number = Infinity
+  deadlineMs: number = Infinity,
+  /** who the shift schedule puts on duty at an instant */
+  onDuty: OnDuty = () => null
 ): Promise<{ tree: ShopTree; crawled: number; partial: boolean }> {
   // seed from what earlier runs already captured
   const tree: ShopTree = {}
@@ -202,23 +222,17 @@ async function syncShopInbox(
     conv: (typeof conversations)[number]
     /** tracked staff.key -> earliest message time today */
     handlersToday: Map<string, number>
-    /**
-     * The response outcome for this conversation, or null when it needs no
-     * human (all first-touches handled by Botcake, or this staff never
-     * engaged). `minutes` is the FIRST-response time in minutes (crit 4);
-     * `kind` also folds in end-of-day abandonment (crit 5).
-     */
-    response: {
-      kind: "onTime" | "slow" | "missed"
-      minutes: number | null
-      replierKey: string | null
-    } | null
+    /** customer messages that need a person, oldest first */
+    customer: GradedMessage[]
+    /** tracked staff messages (may run past the day), oldest first */
+    replies: StaffReply[]
   }
 
   // Botcake's flow has ~30-min gaps mid-sequence, so the window is generous.
   const BOT_GRACE_MS = 20 * 60_000
-  // A customer's LAST line that is a thank-you / "I'll contact later" / "no
-  // need" needs no reply — not a miss even if unanswered. (User, 06/09.)
+  // A customer line that is a thank-you / "I'll contact later" / "no need"
+  // needs no reply — not a miss even if unanswered. (User, 06/09.) "Đợi em
+  // xíu" DOES need a reply (user, 29/09).
   const CLOSING_RE =
     /c[aáảâấ]?m ơn|thank|tks|d[aạ] v[aâ]ng|v[aâ]ng [aạ]|li[eê]n h[eệ].*(sau|l[aạ]i)|nh[aắ]n.*(sau|l[aạ]i)|h[eẹ]n.*(sau|l[aạ]i|g[aặ]p)|đ[eể] (m[iì]nh|em|e|t[oô]i) (xem|suy ngh|tham kh|h[oỏ]i)|khi n[aà]o c[aầ]n|c[aầ]n (th[iì]|g[iì]) (nh[aắ]n|li[eê]n h[eệ]|inbox)|kh[oô]ng c[aầ]n|th[oô]i [aạ]|ok(i|e|ê)?( [aạ]| nha| b[aạ]n)?\s*$/i
 
@@ -236,14 +250,16 @@ async function syncShopInbox(
         { sinceMs: fromMs, maxBatches: 10 }
       )
       const handlersToday = new Map<string, number>()
-      const staffMsgs = messages.filter(
-        (m) => m.actor === "staff" && m.senderUid && staffByUid(m.senderUid)
-      )
-      for (const m of staffMsgs) {
+      const replies: StaffReply[] = []
+      for (const m of messages) {
+        const member = m.actor === "staff" ? staffByUid(m.senderUid) : null
+        if (!member) continue
+        replies.push({ atMs: m.insertedAtMs, staffKey: member.key })
         if (!inDay(m.insertedAtMs)) continue
-        const key = staffByUid(m.senderUid)!.key
-        const prev = handlersToday.get(key)
-        if (prev == null || m.insertedAtMs < prev) handlersToday.set(key, m.insertedAtMs)
+        const prev = handlersToday.get(member.key)
+        if (prev == null || m.insertedAtMs < prev) {
+          handlersToday.set(member.key, m.insertedAtMs)
+        }
       }
 
       const botMsgs = messages.filter((m) => m.actor === "bot")
@@ -254,72 +270,83 @@ async function syncShopInbox(
 
       // customer messages that actually need a person: after the Botcake
       // first-touch, inside working hours (>= 8h VN)
-      const relevant = messages.filter(
-        (m) =>
-          m.actor === "customer" &&
-          inDay(m.insertedAtMs) &&
-          vnHour(m.insertedAtMs) >= 8 &&
-          !botHandled(m.insertedAtMs)
-      )
-
-      let response: Crawled["response"] = null
-      if (relevant.length > 0 && handlersToday.size > 0) {
-        const staffAfter = (t: number) =>
-          staffMsgs.find((s) => s.insertedAtMs > t) ?? null
-        const keyOf = (uid: string | null | undefined) =>
-          uid ? (staffByUid(uid)?.key ?? null) : null
-
-        const firstCm = relevant[0]
-        const firstReply = staffAfter(firstCm.insertedAtMs)
-        const firstMin = firstReply
-          ? Math.max(
-              0,
-              (firstReply.insertedAtMs - firstCm.insertedAtMs) / 60_000
-            )
-          : null
-
-        // "abandoned" only once the last customer line has gone unanswered for
-        // 20+ min (measured to now, or to end-of-day for past days) — otherwise
-        // a message that just arrived would be a false miss and the conv is
-        // never re-crawled this day.
-        const last = relevant[relevant.length - 1]
-        const deadline = Math.min(toMs, Date.now())
-        const abandoned =
-          !staffAfter(last.insertedAtMs) &&
-          !CLOSING_RE.test(last.text) &&
-          deadline - last.insertedAtMs > 20 * 60_000
-
-        const replierKey =
-          keyOf(firstReply?.senderUid) ??
-          [...handlersToday.keys()][0] ??
-          null
-
-        if (abandoned) {
-          response = { kind: "missed", minutes: firstMin, replierKey }
-        } else if (firstReply && firstMin != null) {
-          response = {
-            kind: firstMin <= 3 ? "onTime" : "slow",
-            minutes: firstMin,
-            replierKey,
-          }
-        }
-        // else: first line is a closing note or just arrived — nothing to grade
-      }
-      return { conv, handlersToday, response }
+      const customer = messages
+        .filter(
+          (m) =>
+            m.actor === "customer" &&
+            inDay(m.insertedAtMs) &&
+            vnHour(m.insertedAtMs) >= 8 &&
+            !botHandled(m.insertedAtMs)
+        )
+        .map((m) => ({ atMs: m.insertedAtMs, text: m.text }))
+      return { conv, handlersToday, customer, replies }
     } catch {
-      return { conv, handlersToday: new Map(), response: null }
+      return { conv, handlersToday: new Map(), customer: [], replies: [] }
     }
   })
 
+  // Who was active in each shift (staff messages here + activity already on
+  // the day) — the fallback when the schedule doesn't say who was on duty.
+  const activeIn = new Map<number, Map<string, number>>()
+  const noteActive = (shiftStartMs: number, staffKey: string, n: number) => {
+    const counts = activeIn.get(shiftStartMs) ?? new Map<string, number>()
+    counts.set(staffKey, (counts.get(staffKey) ?? 0) + n)
+    activeIn.set(shiftStartMs, counts)
+  }
+  const shiftStartHour: Partial<Record<ShiftBucketKey, number>> = {
+    sang: 8,
+    chieu: 13,
+    toi: 19,
+  }
+  for (const [staffKey, byShift] of Object.entries(tree)) {
+    for (const [sb, cell] of Object.entries(byShift)) {
+      const h = shiftStartHour[sb as ShiftBucketKey]
+      if (h != null && cell?.activityHits) {
+        noteActive(fromMs + h * 3_600_000, staffKey, cell.activityHits)
+      }
+    }
+  }
+  for (const item of crawled) {
+    for (const r of item?.replies ?? []) {
+      const span = shiftSpanAt(r.atMs)
+      if (span) noteActive(span.startMs, r.staffKey, 1)
+    }
+  }
+  const whoIsOnDuty: OnDuty = (atMs) => {
+    const scheduled = onDuty(atMs)
+    if (scheduled) return scheduled
+    const span = shiftSpanAt(atMs)
+    const counts = span ? activeIn.get(span.startMs) : undefined
+    if (!counts) return null
+    return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+  }
+
+  const nowMs = Date.now()
   let skipped = 0
   for (const item of crawled) {
     if (!item) {
       skipped += 1
       continue
     }
-    processed.add(item.conv.id)
     const conv = item.conv
-    if (item.handlersToday.size === 0 && item.response == null) continue
+    // Only count a conversation once its outcome is settled — a message
+    // still waiting for a reply may yet be answered in its shift, or by the
+    // next shift (making it the previous shift's miss). Left un-`processed`,
+    // it's simply crawled again next sync.
+    const grading = gradeConversation({
+      customer: item.customer,
+      replies: item.replies,
+      onDuty: whoIsOnDuty,
+      needsReply: (text) => !CLOSING_RE.test(text),
+      nowMs,
+    })
+    if (!grading.final) continue
+    processed.add(conv.id)
+    // as before, only conversations a tracked staff member took part in are
+    // graded (here: any reply from this day on — the next shift's included)
+    const engaged = item.replies.some((r) => r.atMs >= fromMs)
+    const outcomes = engaged ? grading.outcomes : []
+    if (item.handlersToday.size === 0 && outcomes.length === 0) continue
 
     const hasDemo = has(conv.tagIds, tagId.demo)
     const hasTiemNang = has(conv.tagIds, tagId.tiemNang)
@@ -371,28 +398,23 @@ async function syncShopInbox(
     // criteria 4 & 5 — skip conversations tagged Demo* / Thông điệp / Hẹn /
     // Khách rác (không cần rep), and "Đã chốt" ones (khách thường chỉ nhắn
     // một câu cảm ơn cuối hội thoại). They still count in "Tổng hội thoại".
-    const r = item.response
-    if (!r || noReplyNeeded || hasDaChot) continue
-    const key = r.replierKey ?? [...item.handlersToday.keys()][0]
-    if (!key) continue
-    const at = item.handlersToday.get(key) ?? conv.lastCustomerAtMs
-    const b = bucket(key, shiftBucketOf(at))
-    b.replied += 1
-    const event = { ...evBase, atMs: at }
-    if (r.kind === "missed") {
-      b.missed += 1
-      b.missedEvents.push({ ...event, detail: "bỏ ngỏ tin cuối của khách" })
-    } else if (r.kind === "onTime") {
-      b.onTime += 1
-    } else {
-      b.slow += 1
-      b.slowEvents.push({
-        ...event,
-        detail:
-          r.minutes == null
-            ? "rep chậm"
-            : `rep tin đầu sau ${Math.round(r.minutes)}′`,
-      })
+    // Otherwise each person the grading holds responsible gets one outcome
+    // (see `gradeConversation`: a message left past the end of a shift is
+    // that shift's miss, not the next person's slow reply).
+    if (noReplyNeeded || hasDaChot) continue
+    for (const o of outcomes) {
+      const b = bucket(o.staffKey, shiftBucketOf(o.atMs))
+      b.replied += 1
+      const event = { ...evBase, atMs: o.atMs, detail: o.detail }
+      if (o.kind === "missed") {
+        b.missed += 1
+        b.missedEvents.push(event)
+      } else if (o.kind === "onTime") {
+        b.onTime += 1
+      } else {
+        b.slow += 1
+        b.slowEvents.push(event)
+      }
     }
   }
 
@@ -763,12 +785,46 @@ async function fetchPageInputs(
   }
 }
 
+/**
+ * Bump when the inbox grading rules change: a day built with an older
+ * version is re-graded (every conversation crawled again) on its next sync.
+ *   2 — a message left unanswered past the end of a shift is that shift's
+ *       miss, not the next person's slow reply (29/09/2026).
+ */
+const RULES_VERSION = 2
+
+/**
+ * A day's inbox tree with only its activity signals kept — the base for a
+ * re-grade. The rest is rebuilt from the conversations; the "seen" markers
+ * behind the activity can't be (Pancake only keeps recent ones).
+ */
+function activityOnly(tree: ShopTree): ShopTree {
+  const out: ShopTree = {}
+  for (const [staffKey, byShift] of Object.entries(tree)) {
+    out[staffKey] = {}
+    for (const [sb, cell] of Object.entries(byShift) as [
+      ShiftBucketKey,
+      AgentDayBucket,
+    ][]) {
+      if (!cell) continue
+      out[staffKey][sb] = {
+        ...emptyBucket(),
+        activityHits: cell.activityHits ?? 0,
+        firstActivityMs: cell.firstActivityMs ?? 0,
+        lastActivityMs: cell.lastActivityMs ?? 0,
+      }
+    }
+  }
+  return out
+}
+
 /** Build one Vietnam day's `pancakeAgentDaily/{date}` from pre-fetched inputs. */
 async function buildDay(
   dateISO: string,
   inputs: PageInputs[],
   fresh: boolean,
-  crawlDeadlineMs: number = Infinity
+  crawlDeadlineMs: number = Infinity,
+  onDuty: OnDuty = () => null
 ): Promise<AgentDayDoc> {
   const { fromMs, toMs } = vnDayRange(dateISO)
   const warnings: string[] = []
@@ -780,7 +836,11 @@ async function buildDay(
   const existing = fresh
     ? undefined
     : ((await ref.get().catch(() => null))?.data() as AgentDayDoc | undefined)
-  const processed = new Set<string>(existing?.processedConvIds ?? [])
+  const regrade =
+    existing != null && (existing.rulesVersion ?? 1) < RULES_VERSION
+  const processed = new Set<string>(
+    regrade ? [] : (existing?.processedConvIds ?? [])
+  )
 
   const orderData: BucketTree = {}
   const inboxData: BucketTree = {}
@@ -800,17 +860,19 @@ async function buildDay(
       : { tree: {} as ShopTree, closedOrderConvIds: new Set<string>() }
     orderData[fbPageId] = orderTree
 
+    const seed = (existing?.inboxData?.[fbPageId] as ShopTree) ?? {}
     const inbox = await syncShopInbox(
       input.page,
       fromMs,
       toMs,
-      (existing?.inboxData?.[fbPageId] as ShopTree) ?? {},
+      regrade ? activityOnly(seed) : seed,
       processed,
       input.tagId,
       closedOrderConvIds,
       input.conversations,
       MAX_CRAWL,
-      crawlDeadlineMs
+      crawlDeadlineMs,
+      onDuty
     )
     inboxData[fbPageId] = inbox.tree
     convsCrawled += inbox.crawled
@@ -827,10 +889,47 @@ async function buildDay(
     inboxData,
     processedConvIds: [...processed].slice(-4000),
     warnings: [...new Set([...warnings, ...inputs.flatMap((i) => i.warnings)])],
+    rulesVersion: RULES_VERSION,
   }
 
   await ref.set({ ...doc, updatedAt: FieldValue.serverTimestamp() })
   return doc
+}
+
+/**
+ * Who the shift schedule (`workSchedules`, incl. "trực hộ" hours) puts on
+ * duty at an instant — for `dates` and the morning after (a message left at
+ * the end of a Tối shift is handed over to the next day's Sáng).
+ */
+async function loadOnDuty(dates: string[]): Promise<OnDuty> {
+  const span = [...dates, addDays(dates[dates.length - 1], 1)]
+  const coll = adminDb().collection("workSchedules")
+  const weeks = new Map<string, ScheduleWeek>()
+  try {
+    const snaps = await adminDb().getAll(
+      ...weekIdsForDates(span).map((id) => coll.doc(id))
+    )
+    for (const s of snaps) {
+      weeks.set(s.id, mapScheduleWeek(s.id, s.exists ? s.data() : undefined))
+    }
+  } catch {
+    // no schedule → fall back to who was active (see `syncShopInbox`)
+  }
+  return (atMs) => {
+    const shift = shiftSpanAt(atMs)
+    if (!shift) return null
+    const date = isoFromDate(new Date(atMs + 7 * 3_600_000))
+    const week = weeks.get(mondayOf(date))
+    if (!week) return null
+    const cell = getCell(week, weekdayMon0(date), shift.key)
+    if (!cell.excludeFromScore) return cell.staff
+    // "đổi ca": whoever worked that hour answers for it — the "trực hộ" hours
+    // ticked in the schedule; the rest stay with the registered person
+    // (user, 29/09/2026). A swap with no hours ticked (older entries) is
+    // unknown, so whoever was active that shift is used instead.
+    if (!cell.cover?.length) return null
+    return coverByHour(cell.cover)[vnHour(atMs)] ?? cell.staff
+  }
 }
 
 export type SyncDaysResult = {
@@ -883,16 +982,19 @@ export async function syncDays(
   const startedAt = Date.now()
   const phase1DeadlineMs = startedAt + CRAWL_TIME_BUDGET_MS
   const routeDeadlineMs = startedAt + ROUTE_TIME_BUDGET_MS
-  const inputs = await Promise.all(
-    pages.map((page) =>
-      fetchPageInputs(
-        page,
-        pending,
-        phase1DeadlineMs,
-        resume?.pages[page.fbPageId]
+  const [inputs, onDuty] = await Promise.all([
+    Promise.all(
+      pages.map((page) =>
+        fetchPageInputs(
+          page,
+          pending,
+          phase1DeadlineMs,
+          resume?.pages[page.fbPageId]
+        )
       )
-    )
-  )
+    ),
+    loadOnDuty(pending),
+  ])
 
   const out: AgentDayDoc[] = []
   for (const date of pending) {
@@ -901,7 +1003,15 @@ export async function syncDays(
     if (!inputs.every((pi) => dateReachedByPage(pi, fromMs))) continue
     // the crawl itself also stops at the deadline — what's left of the day
     // comes back `partial` and goes into the resume
-    out.push(await buildDay(date, inputs, freshDays.has(date), routeDeadlineMs))
+    out.push(
+      await buildDay(
+        date,
+        inputs,
+        freshDays.has(date),
+        routeDeadlineMs,
+        onDuty
+      )
+    )
   }
 
   const finished = new Set(out.filter((d) => !d.partial).map((d) => d.date))

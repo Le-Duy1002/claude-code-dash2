@@ -331,6 +331,8 @@ export type AgentDayDoc = {
   inboxData: BucketTree
   processedConvIds: string[]
   warnings: string[]
+  /** scoring-rules version the inbox grading was built with (absent = 1) */
+  rulesVersion?: number
 }
 
 /** Merge every cell of `orderData` + `inboxData` into one bucket tree. */
