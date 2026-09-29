@@ -34,6 +34,7 @@ const RANGE_KEYS: RangeKey[] = [
   "lastMonth",
   "30d",
   "60d",
+  "90d",
   "custom",
 ]
 const SHIFT_KEYS: ShiftKey[] = ["all", "sang", "chieu", "toi"]

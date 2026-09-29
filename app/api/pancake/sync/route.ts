@@ -69,11 +69,24 @@ export async function POST(request: Request) {
   }
 
   const fresh = url.searchParams.get("fresh") === "1"
+  // optional JSON body `{ resume: "<token>" }` — continues a walk an earlier
+  // call cut short (the `resume.token` it returned)
+  const body = (await request.json().catch(() => null)) as {
+    resume?: unknown
+  } | null
+  const resumeToken = typeof body?.resume === "string" ? body.resume : null
 
   try {
-    const docs = await syncDays(dates, fresh)
+    const { docs, walkAdvanced, resume, errors } = await syncDays(
+      dates,
+      fresh,
+      resumeToken
+    )
     return NextResponse.json({
       ok: true,
+      walkAdvanced,
+      resume,
+      errors,
       days: docs.map((doc) => ({
         date: doc.date,
         convsCrawled: doc.convsCrawled,

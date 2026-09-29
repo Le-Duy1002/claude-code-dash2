@@ -47,6 +47,7 @@ const RANGE_KEYS: RangeKey[] = [
   "lastMonth",
   "30d",
   "60d",
+  "90d",
   "custom",
 ]
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
@@ -256,9 +257,14 @@ export async function GET(request: Request) {
         .join(", ")}${missingDays.length > 6 ? "…" : ""}. Bấm “Đồng bộ ngay”.`
     )
   }
-  if (docs.some((doc) => doc.partial)) {
+  const partialDays = docs.filter((doc) => doc.partial).map((doc) => doc.date)
+  if (partialDays.length) {
     warnings.push(
-      "Có ngày lượng hội thoại vượt giới hạn crawl — số phản hồi chỉ tính phần gần nhất."
+      `${partialDays.length} ngày còn hội thoại chưa quét hết: ${partialDays
+        .slice(0, 6)
+        .join(", ")}${
+        partialDays.length > 6 ? "…" : ""
+      } — số liệu các ngày này chưa đủ. Bấm “Đồng bộ ngay” để quét tiếp.`
     )
   }
   for (const doc of docs) {

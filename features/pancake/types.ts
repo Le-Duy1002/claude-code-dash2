@@ -29,6 +29,7 @@ export type RangeKey =
   | "lastMonth"
   | "30d"
   | "60d"
+  | "90d"
   | "custom"
 
 export const RANGE_LABELS: Record<RangeKey, string> = {
@@ -41,6 +42,7 @@ export const RANGE_LABELS: Record<RangeKey, string> = {
   lastMonth: "Tháng trước",
   "30d": "30 ngày trước",
   "60d": "60 ngày trước",
+  "90d": "90 ngày trước",
   custom: "Tùy chọn",
 }
 
@@ -48,7 +50,10 @@ export const RANGE_LABELS: Record<RangeKey, string> = {
 export const RANGE_PRESET_GROUPS: { label: string; keys: RangeKey[] }[] = [
   { label: "Theo ngày", keys: ["today", "yesterday"] },
   { label: "Theo tuần", keys: ["thisWeek", "lastWeek", "7d"] },
-  { label: "Theo tháng", keys: ["thisMonth", "lastMonth", "30d", "60d"] },
+  {
+    label: "Theo tháng",
+    keys: ["thisMonth", "lastMonth", "30d", "60d", "90d"],
+  },
 ]
 
 export const RANGE_OPTIONS = (Object.keys(RANGE_LABELS) as RangeKey[])
@@ -470,6 +475,8 @@ export function resolveRange(
       return { fromMs: vnMidnight(29), toMs: now }
     case "60d":
       return { fromMs: vnMidnight(59), toMs: now }
+    case "90d":
+      return { fromMs: vnMidnight(89), toMs: now }
     case "thisWeek": {
       const wd = (vnParts(now).weekday + 6) % 7 // Mon = 0
       return { fromMs: vnMidnight(wd), toMs: now }

@@ -34,7 +34,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 
-import { syncPancakeRange } from "@/features/pancake/services/work-tracking-service"
+import {
+  describeSyncIssues,
+  syncPancakeRange,
+} from "@/features/pancake/services/work-tracking-service"
 
 import {
   buildPeriod,
@@ -135,9 +138,12 @@ export function PayrollView() {
       })
       setSyncing("Đang dựng bảng lương…")
       await buildPeriod(id)
-      if (result.incomplete.length > 0) {
+      if (result.issues.length > 0) {
         toast.warning(
-          `Đã dựng bảng lương, nhưng ${result.incomplete.length} ngày trong kỳ còn dữ liệu Pancake chưa lấy hết (giai đoạn quá xa/quá nhiều hội thoại) — bấm "Dựng bảng lương" lại để lấy tiếp và cập nhật số liệu.`
+          `Đã dựng bảng lương, nhưng dữ liệu Pancake chưa đủ. ${describeSyncIssues(
+            result.issues
+          )} Sau đó bấm "Dựng bảng lương" để cập nhật số liệu.`,
+          { duration: Infinity, closeButton: true }
         )
       } else {
         toast.success("Đã đồng bộ và dựng bảng lương")
