@@ -454,6 +454,20 @@ export function registeredHours(
       if (date < fromIso || date > toIso) return
       for (const shift of SHIFT_IDS) {
         const cell = getCell(week, dayIndex, shift)
+        if (cell.excludeFromScore && cell.cover?.length) {
+          // "đổi ca" with "trực hộ" hours ticked: each covering person gets
+          // their hours, the registered person the rest (user, 29/09/2026)
+          const byHour = coverByHour(cell.cover)
+          for (const h of shiftHourSlots(shift)) {
+            const who = byHour[h] ?? cell.staff
+            if (!who) continue
+            const row = bump(who)
+            row.shiftHours += 1
+            row.dates.add(date)
+          }
+          if (cell.staff) bump(cell.staff).shifts += 1
+          continue
+        }
         if (!cell.staff) continue
         const row = bump(cell.staff)
         row.shiftHours += SHIFT_DEFS[shift].hours

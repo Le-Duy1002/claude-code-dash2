@@ -15,9 +15,12 @@ import {
   SHIFT_DEFS,
   SHIFT_IDS,
   WEEKDAY_LABELS,
+  coverByHour,
   getCell,
+  shiftHourSlots,
   vnShiftWindowMs,
   weekDates,
+  type ScheduleCell,
   type ScheduleWeek,
   type ShiftId,
 } from "./types"
@@ -209,6 +212,11 @@ export type PayrollShiftAgg = {
   paidLastHourHours: number
   /** registered shift-length hours for finished, non-excluded shifts */
   expectedHours: number
+  /**
+   * Hours from finished "đổi ca" shifts with "trực hộ" hours ticked — also
+   * included in `expectedHours` / `paidHours` (see `addSwapHours`).
+   */
+  swapHours: number
   lateCount: number
   shortAbsenceCount: number
   longAbsenceCount: number
@@ -223,6 +231,7 @@ function emptyPayrollAgg(): PayrollShiftAgg {
     paidHours: 0,
     paidLastHourHours: 0,
     expectedHours: 0,
+    swapHours: 0,
     lateCount: 0,
     shortAbsenceCount: 0,
     longAbsenceCount: 0,
@@ -236,8 +245,9 @@ const overlapMs = (a0: number, a1: number, b0: number, b1: number) =>
 
 /**
  * Per-staff shift aggregates for payroll over `[fromIso, toIso]`. Only shifts
- * whose window has ended (`endMs <= nowMs`) and that are not flagged "đổi ca"
- * count.
+ * whose window has ended (`endMs <= nowMs`) count. Shifts flagged "đổi ca"
+ * are left out of the discipline checks; their hours count only through the
+ * "trực hộ" hours ticked in the schedule (see `addSwapHours`).
  */
 export function evaluatePayrollShifts(
   weeks: ScheduleWeek[],
@@ -249,18 +259,45 @@ export function evaluatePayrollShifts(
   const out: Record<string, PayrollShiftAgg> = {}
   const get = (key: string) => (out[key] ??= emptyPayrollAgg())
 
+  /**
+   * A finished "đổi ca" shift with its "trực hộ" hours ticked (user,
+   * 29/09/2026): each covering person gets the hours they ticked, the
+   * registered person the rest of the shift — both as scheduled hours at the
+   * normal rate. The shift's final hour is still paid double to the
+   * registered person when it's theirs; a coverer who worked it notes that
+   * themselves. A swap with no hours ticked isn't counted for anyone — the
+   * manager enters it by hand (`paidHoursManual`).
+   */
+  const addSwapHours = (date: string, shift: ShiftId, cell: ScheduleCell) => {
+    if (!cell.cover?.length) return
+    if (vnShiftWindowMs(date, shift).endMs > nowMs) return
+    const byHour = coverByHour(cell.cover)
+    const slots = shiftHourSlots(shift)
+    const lastSlot = slots[slots.length - 1]
+    for (const h of slots) {
+      const who = byHour[h] ?? cell.staff
+      if (!who) continue
+      const row = get(who)
+      row.swapHours += 1
+      row.expectedHours += 1
+      row.paidHours += 1
+      if (h === lastSlot && who === cell.staff) row.paidLastHourHours += 1
+    }
+  }
+
   for (const week of weeks) {
     const dates = weekDates(week.weekId)
     dates.forEach((date, dayIndex) => {
       if (date < fromIso || date > toIso) return
       for (const shift of SHIFT_IDS) {
         const cell = getCell(week, dayIndex, shift)
-        if (!cell.staff) continue
-        const row = get(cell.staff)
         if (cell.excludeFromScore) {
-          row.excludedShifts += 1
+          if (cell.staff) get(cell.staff).excludedShifts += 1
+          addSwapHours(date, shift, cell)
           continue
         }
+        if (!cell.staff) continue
+        const row = get(cell.staff)
         const win = vnShiftWindowMs(date, shift)
         if (win.endMs > nowMs) continue
 

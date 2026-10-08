@@ -202,7 +202,10 @@ export async function buildPayrollPeriod(
 
     const sched = schedEval[member.key]
     const pshift = shiftEval[member.key]
-    const hasSchedule = Boolean(pshift && pshift.countedShifts > 0)
+    // "trực hộ" hours alone (no shift of one's own) still make a schedule
+    const hasSchedule = Boolean(
+      pshift && (pshift.countedShifts > 0 || pshift.swapHours > 0)
+    )
 
     const criteria = [
       evaluateCriterion("hours", sched?.hasSchedule ? sched.hoursShort : null),
