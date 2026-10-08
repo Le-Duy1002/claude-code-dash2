@@ -1,8 +1,10 @@
 export { WorkTrackingView } from "./components/work-tracking-view"
 export { DailyLogView } from "./components/daily-log-view"
+export { PageDashboardView } from "./components/page-dashboard-view"
 export {
   fetchWorkTracking,
   fetchDailyLog,
+  fetchPageDashboard,
   triggerPancakeSync,
 } from "./services/work-tracking-service"
 export { STAFF } from "./staff"

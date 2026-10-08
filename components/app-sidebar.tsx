@@ -17,7 +17,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { LayoutDashboardIcon, FolderIcon, FolderOpenIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, ClipboardListIcon, GaugeIcon, CalendarClockIcon, CalendarDaysIcon, BanknoteIcon } from "lucide-react"
+import { LayoutDashboardIcon, FolderIcon, FolderOpenIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, ClipboardListIcon, GaugeIcon, CalendarClockIcon, CalendarDaysIcon, BanknoteIcon, LineChartIcon } from "lucide-react"
 
 const data = {
   user: {
@@ -55,6 +55,14 @@ const data = {
       url: "/theo-doi-cong-viec",
       icon: (
         <GaugeIcon
+        />
+      ),
+    },
+    {
+      title: "Thống kê trang",
+      url: "/thong-ke-trang",
+      icon: (
+        <LineChartIcon
         />
       ),
     },

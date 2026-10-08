@@ -81,6 +81,40 @@ export const SHIFT_OPTIONS: { value: ShiftKey; label: string }[] = [
 
 export type PageKey = "all" | string // "all" or a shop id
 
+// -------------------------------------------------- page dashboard (gộp trang)
+
+export type PageDashboardTotal = {
+  newConversations: number
+  ordersTotal: number
+  ordersClosed: number
+  /** % of new conversations that closed an order, or null with zero conversations */
+  closeRate: number | null
+}
+
+/** `GET /api/pancake/dashboard` response — new conversations / orders / close
+ * rate per page (and combined), filterable by date range AND Vietnam
+ * hour-of-day. Built from the already-synced daily aggregates, so it's fast
+ * but depends on `pageHourly` having been synced for the range (see `warnings`). */
+export type PageDashboardReport = {
+  fromMs: number
+  toMs: number
+  range: RangeKey
+  hourFrom: number
+  hourTo: number
+  pages: (PageDashboardTotal & { id: string; name: string })[]
+  combined: PageDashboardTotal
+  daily: {
+    date: string
+    byPage: Record<
+      string,
+      Pick<PageDashboardTotal, "newConversations" | "ordersTotal" | "ordersClosed">
+    >
+  }[]
+  lastSyncedAtMs: number | null
+  missingDays: string[]
+  warnings: string[]
+}
+
 // ---------------------------------------------------------------- report
 
 export type StaffEvaluation = {
@@ -333,6 +367,29 @@ export type AgentDayDoc = {
   warnings: string[]
   /** scoring-rules version the inbox grading was built with (absent = 1) */
   rulesVersion?: number
+  /**
+   * Raw per-page totals (NOT staff-attributed, unlike `orderData`/`inboxData`
+   * — every conversation/order on the page counts, whether or not a tracked
+   * staff member ever touched it), bucketed by Vietnam local hour (index
+   * 0–23) for the dashboard's time-of-day filter. Absent on days synced
+   * before this was added.
+   */
+  pageHourly?: Record<string, PageHourlyStats>
+}
+
+/** 24-element arrays, index = Vietnam local hour (0–23). */
+export type PageHourlyStats = {
+  newConversations: number[]
+  ordersTotal: number[]
+  ordersClosed: number[]
+}
+
+export function emptyPageHourlyStats(): PageHourlyStats {
+  return {
+    newConversations: Array(24).fill(0),
+    ordersTotal: Array(24).fill(0),
+    ordersClosed: Array(24).fill(0),
+  }
 }
 
 /** Merge every cell of `orderData` + `inboxData` into one bucket tree. */

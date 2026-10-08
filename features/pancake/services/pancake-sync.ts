@@ -42,6 +42,7 @@ import {
   TAG_NAMES,
   addBucket,
   emptyBucket,
+  emptyPageHourlyStats,
   markActivity,
   shiftBucketOf,
   vnDayRange,
@@ -49,6 +50,7 @@ import {
   type AgentDayBucket,
   type AgentDayDoc,
   type BucketTree,
+  type PageHourlyStats,
   type ShiftBucketKey,
 } from "../types"
 
@@ -151,6 +153,34 @@ function bucketShopOrders(
     }
   }
   return { tree, closedOrderConvIds }
+}
+
+/**
+ * Raw per-page totals for one Vietnam day, bucketed by local hour — NOT
+ * staff-attributed (unlike `bucketShopOrders`/`syncShopInbox`, which only
+ * count what a tracked staff member touched). Feeds the page-level dashboard
+ * (new conversations / orders / close rate, filterable by hour-of-day), kept
+ * entirely separate from the staff-scoring trees above.
+ */
+function bucketPageHourly(
+  conversations: PancakeConversation[],
+  orders: PancakeOrder[],
+  fromMs: number,
+  toMs: number
+): PageHourlyStats {
+  const stats = emptyPageHourlyStats()
+  for (const conv of conversations) {
+    if (conv.lastCustomerAtMs < fromMs || conv.lastCustomerAtMs >= toMs) continue
+    stats.newConversations[vnHour(conv.lastCustomerAtMs)] += 1
+  }
+  for (const order of orders) {
+    if (order.insertedAtMs < fromMs || order.insertedAtMs >= toMs) continue
+    const h = vnHour(order.insertedAtMs)
+    stats.ordersTotal[h] += 1
+    const closed = order.status !== 0 && !CANCELLED_STATUSES.has(order.status)
+    if (closed) stats.ordersClosed[h] += 1
+  }
+  return stats
 }
 
 // ------------------------------------------ inbox (accumulated across sync runs)
@@ -844,6 +874,7 @@ async function buildDay(
 
   const orderData: BucketTree = {}
   const inboxData: BucketTree = {}
+  const pageHourly: Record<string, PageHourlyStats> = {}
   let convsCrawled = 0
   let partial = false
 
@@ -859,6 +890,12 @@ async function buildDay(
         )
       : { tree: {} as ShopTree, closedOrderConvIds: new Set<string>() }
     orderData[fbPageId] = orderTree
+    pageHourly[fbPageId] = bucketPageHourly(
+      input.conversations,
+      input.orders,
+      fromMs,
+      toMs
+    )
 
     const seed = (existing?.inboxData?.[fbPageId] as ShopTree) ?? {}
     const inbox = await syncShopInbox(
@@ -887,6 +924,7 @@ async function buildDay(
     shops: inputs.map((i) => ({ id: i.page.fbPageId, name: i.page.name })),
     orderData,
     inboxData,
+    pageHourly,
     processedConvIds: [...processed].slice(-4000),
     warnings: [...new Set([...warnings, ...inputs.flatMap((i) => i.warnings)])],
     rulesVersion: RULES_VERSION,

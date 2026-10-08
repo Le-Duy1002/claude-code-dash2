@@ -9,6 +9,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Slider } from "@/components/ui/slider"
 import { cn } from "@/lib/utils"
 
 import { RANGE_LABELS, RANGE_PRESET_GROUPS, type RangeKey } from "../types"
@@ -18,6 +19,15 @@ export type RangeValue = {
   /** `YYYY-MM-DD` (Vietnam), only meaningful when range === "custom" */
   from?: string
   to?: string
+  /** Hour-of-day filter, Vietnam local time, [hourFrom, hourTo). Only read
+   * when `showHourFilter` is passed to `DateRangePicker` — omitted or
+   * `0`–`24` means "no filter, the whole day". */
+  hourFrom?: number
+  hourTo?: number
+}
+
+function hourLabel(h: number): string {
+  return h === 24 ? "24:00" : `${String(h).padStart(2, "0")}:00`
 }
 
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000
@@ -120,15 +130,23 @@ function Month({
 export function DateRangePicker({
   value,
   onChange,
+  showHourFilter,
   className,
 }: {
   value: RangeValue
   onChange: (next: RangeValue) => void
+  /** Show a 00:00–24:00 time-of-day slider under the calendar (Vietnam
+   * local hours) and fold `hourFrom`/`hourTo` into every `onChange` call. */
+  showHourFilter?: boolean
   className?: string
 }) {
   const [open, setOpen] = React.useState(false)
   const [draftFrom, setDraftFrom] = React.useState<string | null>(null)
   const [draftTo, setDraftTo] = React.useState<string | null>(null)
+  const [draftHours, setDraftHours] = React.useState<[number, number]>([
+    value.hourFrom ?? 0,
+    value.hourTo ?? 24,
+  ])
   const [view, setView] = React.useState(() => {
     const base = value.from ? parseISO(value.from) : parseISO(todayISO())
     return addMonth(base.y, base.m, -1)
@@ -146,12 +164,18 @@ export function DateRangePicker({
       setDraftFrom(null)
       setDraftTo(null)
     }
-  }, [open, value.range, value.from, value.to])
+    setDraftHours([value.hourFrom ?? 0, value.hourTo ?? 24])
+  }, [open, value.range, value.from, value.to, value.hourFrom, value.hourTo])
 
+  const hourFiltered =
+    showHourFilter && ((value.hourFrom ?? 0) > 0 || (value.hourTo ?? 24) < 24)
   const label =
-    value.range === "custom" && value.from
+    (value.range === "custom" && value.from
       ? `${fmt(value.from)} → ${fmt(value.to ?? value.from)}`
-      : RANGE_LABELS[value.range]
+      : RANGE_LABELS[value.range]) +
+    (hourFiltered
+      ? ` · ${hourLabel(value.hourFrom ?? 0)}–${hourLabel(value.hourTo ?? 24)}`
+      : "")
 
   function pick(isoDate: string) {
     if (!draftFrom || (draftFrom && draftTo)) {
@@ -165,14 +189,21 @@ export function DateRangePicker({
     }
   }
 
+  function withHours(next: Omit<RangeValue, "hourFrom" | "hourTo">): RangeValue {
+    if (!showHourFilter) return next
+    return { ...next, hourFrom: draftHours[0], hourTo: draftHours[1] }
+  }
+
   function applyCustom() {
     if (!draftFrom) return
-    onChange({ range: "custom", from: draftFrom, to: draftTo ?? draftFrom })
+    onChange(
+      withHours({ range: "custom", from: draftFrom, to: draftTo ?? draftFrom })
+    )
     setOpen(false)
   }
 
   function applyPreset(key: RangeKey) {
-    onChange({ range: key })
+    onChange(withHours({ range: key }))
     setOpen(false)
   }
 
@@ -264,6 +295,34 @@ export function DateRangePicker({
                     />
                   </div>
                 </div>
+                {showHourFilter ? (
+                  <div className="mt-3 border-t pt-3">
+                    <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Khung giờ (giờ VN)</span>
+                      <span className="tabular-nums">
+                        {hourLabel(draftHours[0])} – {hourLabel(draftHours[1])}
+                      </span>
+                    </div>
+                    <Slider
+                      min={0}
+                      max={24}
+                      step={1}
+                      value={draftHours}
+                      onValueChange={(v) =>
+                        setDraftHours(v as [number, number])
+                      }
+                      onValueCommitted={(v) => {
+                        const next = v as [number, number]
+                        setDraftHours(next)
+                        onChange({
+                          ...value,
+                          hourFrom: next[0],
+                          hourTo: next[1],
+                        })
+                      }}
+                    />
+                  </div>
+                ) : null}
                 <div className="mt-2 flex justify-end gap-2">
                   <Button
                     variant="ghost"

@@ -3,6 +3,7 @@ import { auth } from "@/lib/firebase"
 import { vnDatesInRange } from "../types"
 import type {
   DailyLogResponse,
+  PageDashboardReport,
   PageKey,
   RangeKey,
   ShiftKey,
@@ -79,6 +80,38 @@ export async function fetchWorkTracking(
     throw new Error(body.detail || body.error || `Lỗi ${response.status}`)
   }
   return body as WorkReport
+}
+
+/**
+ * Reads the page-level dashboard (new conversations / orders / close rate,
+ * gộp chung or per page) for the selected date + hour-of-day range. Same
+ * fast synced-aggregate pattern as `fetchWorkTracking`.
+ */
+export async function fetchPageDashboard(
+  params: {
+    range: RangeKey
+    from?: string | null
+    to?: string | null
+    hourFrom?: number
+    hourTo?: number
+  },
+  signal?: AbortSignal
+): Promise<PageDashboardReport> {
+  const q = new URLSearchParams()
+  q.set("range", params.range)
+  if (params.from) q.set("from", params.from)
+  if (params.to) q.set("to", params.to)
+  if (params.hourFrom != null) q.set("hourFrom", String(params.hourFrom))
+  if (params.hourTo != null) q.set("hourTo", String(params.hourTo))
+  const response = await fetch(`/api/pancake/dashboard?${q}`, {
+    headers: { Authorization: `Bearer ${await idToken()}` },
+    signal,
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new Error(body.detail || body.error || `Lỗi ${response.status}`)
+  }
+  return body as PageDashboardReport
 }
 
 /**
