@@ -3,6 +3,7 @@ import { auth } from "@/lib/firebase"
 import { vnDatesInRange } from "../types"
 import type {
   DailyLogResponse,
+  DemoDashboardReport,
   PageDashboardReport,
   PageKey,
   RangeKey,
@@ -112,6 +113,29 @@ export async function fetchPageDashboard(
     throw new Error(body.detail || body.error || `Lỗi ${response.status}`)
   }
   return body as PageDashboardReport
+}
+
+/**
+ * Reads the demo funnel (nhắn đến / cá nhân xem / cá nhân chốt) for the
+ * selected date range. Same fast synced-aggregate pattern.
+ */
+export async function fetchDemoDashboard(
+  params: { range: RangeKey; from?: string | null; to?: string | null },
+  signal?: AbortSignal
+): Promise<DemoDashboardReport> {
+  const q = new URLSearchParams()
+  q.set("range", params.range)
+  if (params.from) q.set("from", params.from)
+  if (params.to) q.set("to", params.to)
+  const response = await fetch(`/api/pancake/demo-dashboard?${q}`, {
+    headers: { Authorization: `Bearer ${await idToken()}` },
+    signal,
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new Error(body.detail || body.error || `Lỗi ${response.status}`)
+  }
+  return body as DemoDashboardReport
 }
 
 /**

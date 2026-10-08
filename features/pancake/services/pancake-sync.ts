@@ -38,10 +38,13 @@ import {
 } from "../reply-grading"
 import { seenStaffByFbId, staffByUid } from "../staff"
 import {
+  DEMO_CLOSED_TAG_BY_STAFF,
+  DEMO_VIEWED_TAG_BY_STAFF,
   NO_REPLY_NEEDED_TAGS,
   TAG_NAMES,
   addBucket,
   emptyBucket,
+  emptyDemoFunnelStats,
   emptyPageHourlyStats,
   markActivity,
   shiftBucketOf,
@@ -50,6 +53,7 @@ import {
   type AgentDayBucket,
   type AgentDayDoc,
   type BucketTree,
+  type DemoFunnelStats,
   type PageHourlyStats,
   type ShiftBucketKey,
 } from "../types"
@@ -179,6 +183,38 @@ function bucketPageHourly(
     stats.ordersTotal[h] += 1
     const closed = order.status !== 0 && !CANCELLED_STATUSES.has(order.status)
     if (closed) stats.ordersClosed[h] += 1
+  }
+  return stats
+}
+
+/**
+ * Demo funnel for one Vietnam day: `demo` tag (sent, team-wide) and each
+ * staff member's "assigned/viewed" and "closed" tags (see
+ * `DEMO_VIEWED_TAG_BY_STAFF`/`DEMO_CLOSED_TAG_BY_STAFF`) — day attribution
+ * matches `bucketPageHourly`/`syncShopInbox`: the day the CUSTOMER last
+ * wrote, not whenever a tag happened to be toggled.
+ */
+function bucketDemoFunnel(
+  conversations: PancakeConversation[],
+  fromMs: number,
+  toMs: number,
+  demoTagId: DemoTagIds
+): DemoFunnelStats {
+  const stats = emptyDemoFunnelStats()
+  for (const staffKey of Object.keys(demoTagId.viewedByStaff)) {
+    stats.byStaff[staffKey] = { viewed: 0, closed: 0 }
+  }
+  const hasAny = (conv: PancakeConversation, ids: Set<number>) =>
+    conv.tagIds.some((id) => ids.has(id))
+  for (const conv of conversations) {
+    if (conv.lastCustomerAtMs < fromMs || conv.lastCustomerAtMs >= toMs) continue
+    if (hasAny(conv, demoTagId.sent)) stats.sent += 1
+    for (const [staffKey, ids] of Object.entries(demoTagId.viewedByStaff)) {
+      if (hasAny(conv, ids)) stats.byStaff[staffKey].viewed += 1
+    }
+    for (const [staffKey, ids] of Object.entries(demoTagId.closedByStaff)) {
+      if (hasAny(conv, ids)) stats.byStaff[staffKey].closed += 1
+    }
   }
   return stats
 }
@@ -461,10 +497,19 @@ async function syncShopInbox(
 // for the whole date span, then each day is built by filtering that shared data.
 // Syncing a month is one conversation walk, not 30.
 
+/** Tag ids for the demo funnel (sent / viewed-by / closed-by) — see
+ * `DEMO_VIEWED_TAG_BY_STAFF`/`DEMO_CLOSED_TAG_BY_STAFF`'s doc comment. */
+type DemoTagIds = {
+  sent: Set<number>
+  viewedByStaff: Record<string, Set<number>>
+  closedByStaff: Record<string, Set<number>>
+}
+
 type PageInputs = {
   page: PancakePage
   shop: PancakeShop | null
   tagId: TagSets
+  demoTagId: DemoTagIds
   conversations: PancakeConversation[]
   convTags: Map<string, number[]>
   orders: PancakeOrder[]
@@ -675,6 +720,15 @@ async function fetchPageInputs(
     daChot: new Set<number>(),
     noReplyNeeded: new Set<number>(),
   }
+  const demoTagId: DemoTagIds = {
+    sent: new Set<number>(),
+    viewedByStaff: Object.fromEntries(
+      Object.keys(DEMO_VIEWED_TAG_BY_STAFF).map((k) => [k, new Set<number>()])
+    ),
+    closedByStaff: Object.fromEntries(
+      Object.keys(DEMO_CLOSED_TAG_BY_STAFF).map((k) => [k, new Set<number>()])
+    ),
+  }
   const fromOf = (date: string) => vnDayRange(date).fromMs
   const checkpoints = dates.map(fromOf)
   let conversations: PancakeConversation[] = []
@@ -710,6 +764,13 @@ async function fetchPageInputs(
         if (text === TAG_NAMES.daChot) tagId.daChot.add(tag.id)
         if (isDemo || NO_REPLY_NEEDED_TAGS.includes(text)) {
           tagId.noReplyNeeded.add(tag.id)
+        }
+        if (text === TAG_NAMES.demo) demoTagId.sent.add(tag.id)
+        for (const [staffKey, tagText] of Object.entries(DEMO_VIEWED_TAG_BY_STAFF)) {
+          if (text === tagText) demoTagId.viewedByStaff[staffKey].add(tag.id)
+        }
+        for (const [staffKey, tagText] of Object.entries(DEMO_CLOSED_TAG_BY_STAFF)) {
+          if (text === tagText) demoTagId.closedByStaff[staffKey].add(tag.id)
         }
       }
     } catch (error) {
@@ -805,6 +866,7 @@ async function fetchPageInputs(
     page,
     shop,
     tagId,
+    demoTagId,
     conversations,
     convTags,
     orders,
@@ -875,6 +937,7 @@ async function buildDay(
   const orderData: BucketTree = {}
   const inboxData: BucketTree = {}
   const pageHourly: Record<string, PageHourlyStats> = {}
+  const demoFunnel: Record<string, DemoFunnelStats> = {}
   let convsCrawled = 0
   let partial = false
 
@@ -895,6 +958,12 @@ async function buildDay(
       input.orders,
       fromMs,
       toMs
+    )
+    demoFunnel[fbPageId] = bucketDemoFunnel(
+      input.conversations,
+      fromMs,
+      toMs,
+      input.demoTagId
     )
 
     const seed = (existing?.inboxData?.[fbPageId] as ShopTree) ?? {}
@@ -925,6 +994,7 @@ async function buildDay(
     orderData,
     inboxData,
     pageHourly,
+    demoFunnel,
     processedConvIds: [...processed].slice(-4000),
     warnings: [...new Set([...warnings, ...inputs.flatMap((i) => i.warnings)])],
     rulesVersion: RULES_VERSION,

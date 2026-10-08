@@ -26,8 +26,9 @@ import {
   markAutoSynced,
   syncPancakeRange,
 } from "../services/work-tracking-service"
-import type { PageDashboardReport } from "../types"
+import { resolveReportRange, type PageDashboardReport } from "../types"
 import { DateRangePicker, type RangeValue } from "./date-range-picker"
+import { DemoDashboardSection } from "./demo-dashboard-section"
 
 function formatInt(n: number): string {
   return n.toLocaleString("vi-VN")
@@ -66,6 +67,7 @@ const PAGE_CHART_COLORS = ["var(--chart-2)", "var(--chart-4)", "var(--chart-1)"]
 
 export function PageDashboardView() {
   const { user } = useAuth()
+  const [mode, setMode] = React.useState<"pages" | "demo">("pages")
   const [dateRange, setDateRange] = React.useState<RangeValue>({
     range: "thisMonth",
   })
@@ -74,6 +76,7 @@ export function PageDashboardView() {
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [syncing, setSyncing] = React.useState<string | null>(null)
+  const [refreshKey, setRefreshKey] = React.useState(0)
 
   const load = React.useCallback(
     async (signal?: AbortSignal) => {
@@ -121,11 +124,13 @@ export function PageDashboardView() {
   }, [user, load])
 
   async function syncNow() {
-    if (!report) return
-    const fromISO = new Date(report.fromMs + 7 * 3_600_000)
-      .toISOString()
-      .slice(0, 10)
-    const toISO = new Date(Math.min(report.toMs, Date.now()) - 1 + 7 * 3_600_000)
+    const { fromMs, toMs } = resolveReportRange(
+      dateRange.range,
+      dateRange.from,
+      dateRange.to
+    )
+    const fromISO = new Date(fromMs + 7 * 3_600_000).toISOString().slice(0, 10)
+    const toISO = new Date(Math.min(toMs, Date.now()) - 1 + 7 * 3_600_000)
       .toISOString()
       .slice(0, 10)
     setSyncing("Đang đồng bộ Pancake…")
@@ -142,6 +147,7 @@ export function PageDashboardView() {
         toast.success("Đã đồng bộ xong")
       }
       await load()
+      setRefreshKey((k) => k + 1)
     } catch (e) {
       toast.error(`Đồng bộ lỗi: ${(e as Error).message}`)
     } finally {
@@ -187,15 +193,16 @@ export function PageDashboardView() {
             Thống kê trang Pancake
           </h1>
           <p className="text-sm text-muted-foreground">
-            Hội thoại mới, đơn chốt, tỉ lệ chốt — lọc theo khoảng thời gian và
-            khung giờ, gộp chung hoặc theo từng trang.
+            {mode === "pages"
+              ? "Hội thoại mới, đơn chốt, tỉ lệ chốt — lọc theo khoảng thời gian và khung giờ, gộp chung hoặc theo từng trang."
+              : "Phễu demo: nhắn đến → cá nhân xem → cá nhân chốt, theo từng người hoặc cả team."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <DateRangePicker
             value={dateRange}
             onChange={setDateRange}
-            showHourFilter
+            showHourFilter={mode === "pages"}
           />
           <Button
             variant="outline"
@@ -212,125 +219,151 @@ export function PageDashboardView() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-muted p-1">
         <Button
           size="sm"
-          variant={pageFilter === "all" ? "default" : "outline"}
-          onClick={() => setPageFilter("all")}
+          variant={mode === "pages" ? "default" : "ghost"}
+          onClick={() => setMode("pages")}
         >
-          Gộp chung
+          Hội thoại &amp; đơn chốt
         </Button>
-        {pages.map((p) => (
-          <Button
-            key={p.id}
-            size="sm"
-            variant={pageFilter === p.id ? "default" : "outline"}
-            onClick={() => setPageFilter(p.id)}
-          >
-            {p.name}
-          </Button>
-        ))}
-      </div>
-
-      {error ? (
-        <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          <AlertTriangleIcon className="size-4 shrink-0" />
-          {error}
-        </div>
-      ) : null}
-      {report?.warnings.map((w) => (
-        <div
-          key={w}
-          className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
+        <Button
+          size="sm"
+          variant={mode === "demo" ? "default" : "ghost"}
+          onClick={() => setMode("demo")}
         >
-          <AlertTriangleIcon className="size-4 shrink-0" />
-          {w}
-        </div>
-      ))}
-
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {loading && !report ? (
-          <>
-            <Skeleton className="h-24" />
-            <Skeleton className="h-24" />
-            <Skeleton className="h-24" />
-          </>
-        ) : (
-          <>
-            <StatCard
-              label="Hội thoại mới"
-              value={formatInt(selected?.newConversations ?? 0)}
-            />
-            <StatCard
-              label="Đơn chốt"
-              value={formatInt(selected?.ordersClosed ?? 0)}
-              sub={`/ ${formatInt(selected?.ordersTotal ?? 0)} tổng đơn`}
-            />
-            <StatCard
-              label="Tỉ lệ chốt"
-              value={formatPct(selected?.closeRate ?? null)}
-              sub="đơn chốt / hội thoại mới"
-            />
-          </>
-        )}
+          Demo
+        </Button>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">
-            Hội thoại mới theo ngày
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-2 pt-2 sm:px-6">
-          {loading && !report ? (
-            <Skeleton className="h-[250px] w-full" />
-          ) : (
-            <ChartContainer config={chartConfig} className="aspect-auto h-[250px] w-full">
-              <LineChart data={chartData}>
-                <CartesianGrid vertical={false} />
-                <XAxis
-                  dataKey="date"
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  minTickGap={32}
-                  tickFormatter={(value: string) => value.slice(5)}
-                />
-                <ChartTooltip
-                  cursor={false}
-                  content={<ChartTooltipContent indicator="line" />}
-                />
-                {visiblePageIds.length > 1 ? (
-                  <ChartLegend content={<ChartLegendContent />} />
-                ) : null}
-                {visiblePageIds.map((id) => (
-                  <Line
-                    key={id}
-                    dataKey={id}
-                    type="monotone"
-                    stroke={`var(--color-${id})`}
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                ))}
-              </LineChart>
-            </ChartContainer>
-          )}
-        </CardContent>
-      </Card>
+      {mode === "demo" ? (
+        <DemoDashboardSection dateRange={dateRange} refreshKey={refreshKey} />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button
+              size="sm"
+              variant={pageFilter === "all" ? "default" : "outline"}
+              onClick={() => setPageFilter("all")}
+            >
+              Gộp chung
+            </Button>
+            {pages.map((p) => (
+              <Button
+                key={p.id}
+                size="sm"
+                variant={pageFilter === p.id ? "default" : "outline"}
+                onClick={() => setPageFilter(p.id)}
+              >
+                {p.name}
+              </Button>
+            ))}
+          </div>
 
-      {report ? (
-        <p className="text-xs text-muted-foreground">
-          {report.lastSyncedAtMs
-            ? `Đồng bộ lần cuối ${new Date(report.lastSyncedAtMs).toLocaleString("vi-VN")}`
-            : "Chưa đồng bộ dữ liệu cho khoảng thời gian này"}
-          {report.missingDays.length > 0 ? (
-            <Badge variant="outline" className="ml-2">
-              {report.missingDays.length} ngày chưa đồng bộ
-            </Badge>
+          {error ? (
+            <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <AlertTriangleIcon className="size-4 shrink-0" />
+              {error}
+            </div>
           ) : null}
-        </p>
-      ) : null}
+          {report?.warnings.map((w) => (
+            <div
+              key={w}
+              className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
+            >
+              <AlertTriangleIcon className="size-4 shrink-0" />
+              {w}
+            </div>
+          ))}
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {loading && !report ? (
+              <>
+                <Skeleton className="h-24" />
+                <Skeleton className="h-24" />
+                <Skeleton className="h-24" />
+              </>
+            ) : (
+              <>
+                <StatCard
+                  label="Hội thoại mới"
+                  value={formatInt(selected?.newConversations ?? 0)}
+                />
+                <StatCard
+                  label="Đơn chốt"
+                  value={formatInt(selected?.ordersClosed ?? 0)}
+                  sub={`/ ${formatInt(selected?.ordersTotal ?? 0)} tổng đơn`}
+                />
+                <StatCard
+                  label="Tỉ lệ chốt"
+                  value={formatPct(selected?.closeRate ?? null)}
+                  sub="đơn chốt / hội thoại mới"
+                />
+              </>
+            )}
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">
+                Hội thoại mới theo ngày
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-2 pt-2 sm:px-6">
+              {loading && !report ? (
+                <Skeleton className="h-[250px] w-full" />
+              ) : (
+                <ChartContainer
+                  config={chartConfig}
+                  className="aspect-auto h-[250px] w-full"
+                >
+                  <LineChart data={chartData}>
+                    <CartesianGrid vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={8}
+                      minTickGap={32}
+                      tickFormatter={(value: string) => value.slice(5)}
+                    />
+                    <ChartTooltip
+                      cursor={false}
+                      content={<ChartTooltipContent indicator="line" />}
+                    />
+                    {visiblePageIds.length > 1 ? (
+                      <ChartLegend content={<ChartLegendContent />} />
+                    ) : null}
+                    {visiblePageIds.map((id) => (
+                      <Line
+                        key={id}
+                        dataKey={id}
+                        type="monotone"
+                        stroke={`var(--color-${id})`}
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    ))}
+                  </LineChart>
+                </ChartContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          {report ? (
+            <p className="text-xs text-muted-foreground">
+              {report.lastSyncedAtMs
+                ? `Đồng bộ lần cuối ${new Date(report.lastSyncedAtMs).toLocaleString("vi-VN")}`
+                : "Chưa đồng bộ dữ liệu cho khoảng thời gian này"}
+              {report.missingDays.length > 0 ? (
+                <Badge variant="outline" className="ml-2">
+                  {report.missingDays.length} ngày chưa đồng bộ
+                </Badge>
+              ) : null}
+            </p>
+          ) : null}
+        </>
+      )}
     </div>
   )
 }

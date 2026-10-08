@@ -115,6 +115,48 @@ export type PageDashboardReport = {
   warnings: string[]
 }
 
+// -------------------------------------------------------------- demo funnel
+
+export type DemoStaffTotal = {
+  key: string
+  name: string
+  viewed: number
+  closed: number
+  /** % of viewed demos that closed, or null with zero viewed */
+  closeRate: number | null
+}
+
+/** `GET /api/pancake/demo-dashboard` response — demo funnel (nhắn đến → cá
+ * nhân xem → cá nhân chốt), summed across both pages. Built from the
+ * already-synced daily aggregates (see `warnings` when a day predates
+ * `demoFunnel` or isn't synced yet). */
+export type DemoDashboardReport = {
+  fromMs: number
+  toMs: number
+  range: RangeKey
+  /** demos tagged "demo" (sent, team-wide — not yet attributed to anyone) */
+  sent: number
+  staff: DemoStaffTotal[]
+  team: {
+    sent: number
+    viewed: number
+    closed: number
+    /** đơn chốt / demo đã xem */
+    teamCloseRate: number | null
+    /** đơn chốt / demo đã gửi */
+    sentCloseRate: number | null
+    /** demo đã xem / demo đã gửi */
+    responseRate: number | null
+  }
+  daily: {
+    date: string
+    sent: number
+    byStaff: Record<string, { viewed: number; closed: number }>
+  }[]
+  missingDays: string[]
+  warnings: string[]
+}
+
 // ---------------------------------------------------------------- report
 
 export type StaffEvaluation = {
@@ -333,6 +375,30 @@ export const NO_REPLY_NEEDED_TAGS: string[] = [
   TAG_NAMES.khachRac,
 ]
 
+/**
+ * Per-person demo tags (confirmed against the real Pancake tag catalog,
+ * 09/10/2026 — both pages use the same text, different ids). Separate from
+ * `TAG_NAMES.demo`, which only means "this conversation got a demo at all",
+ * not "assigned to / viewed by this specific person" — that distinction is
+ * what the demo funnel dashboard needs (nhắn đến → xem → chốt) and the
+ * existing payroll demo-bonus matching (loose `includes("demo")`) does not
+ * make. Lowercased to match the `.trim().toLowerCase()` tags are compared
+ * with elsewhere.
+ */
+export const DEMO_VIEWED_TAG_BY_STAFF: Record<string, string> = {
+  ha: "hdemo",
+  duy: "ddemo",
+  thuong: "tdemo",
+  quyen: "qdemo",
+}
+/** The tag staff apply by hand to mark a demo as having closed an order. */
+export const DEMO_CLOSED_TAG_BY_STAFF: Record<string, string> = {
+  ha: "hà chốt",
+  duy: "duy chốt",
+  thuong: "thương chốt",
+  quyen: "qchốt",
+}
+
 export const SHIFT_BUCKET_LABEL: Record<ShiftBucketKey, string> = {
   sang: "Sáng",
   chieu: "Chiều",
@@ -375,6 +441,13 @@ export type AgentDayDoc = {
    * before this was added.
    */
   pageHourly?: Record<string, PageHourlyStats>
+  /**
+   * Demo funnel for this day, by page — "demo" tag (sent) team-wide, plus
+   * per-staff "assigned/viewed" and "closed" tag counts (see
+   * `DEMO_VIEWED_TAG_BY_STAFF`/`DEMO_CLOSED_TAG_BY_STAFF`). Absent on days
+   * synced before this was added.
+   */
+  demoFunnel?: Record<string, DemoFunnelStats>
 }
 
 /** 24-element arrays, index = Vietnam local hour (0–23). */
@@ -390,6 +463,17 @@ export function emptyPageHourlyStats(): PageHourlyStats {
     ordersTotal: Array(24).fill(0),
     ordersClosed: Array(24).fill(0),
   }
+}
+
+export type DemoFunnelStats = {
+  /** conversations tagged `demo` (team-wide — not yet attributed to anyone) */
+  sent: number
+  /** staffKey -> { viewed: tagged "assigned to them", closed: tagged "they closed it" } */
+  byStaff: Record<string, { viewed: number; closed: number }>
+}
+
+export function emptyDemoFunnelStats(): DemoFunnelStats {
+  return { sent: 0, byStaff: {} }
 }
 
 /** Merge every cell of `orderData` + `inboxData` into one bucket tree. */
