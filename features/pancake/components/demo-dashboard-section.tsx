@@ -1,13 +1,23 @@
 "use client"
 
 import * as React from "react"
-import { AlertTriangleIcon } from "lucide-react"
+import {
+  AlertTriangleIcon,
+  CheckCircle2Icon,
+  EyeIcon,
+  ReplyIcon,
+  SendIcon,
+  TargetIcon,
+  TrendingUpIcon,
+  type LucideIcon,
+} from "lucide-react"
 
 import { useAuth } from "@/components/auth-provider"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { cn } from "@/lib/utils"
 
 import { fetchDemoDashboard } from "../services/work-tracking-service"
 import type { DemoDashboardReport } from "../types"
@@ -21,33 +31,73 @@ function formatPct(n: number | null): string {
   return n == null ? "—" : `${n.toFixed(1)}%`
 }
 
+/**
+ * Funnel-stage accent: same validated `--chart-orange` token the page
+ * dashboard's chart uses (see `app/globals.css`), stepped by opacity rather
+ * than a separate hue ramp — an ordinal "how deep into the funnel" cue
+ * (gửi -> xem -> chốt), not a value encoding the reader has to decode, so it
+ * stays a quiet icon+border accent and never touches the number itself (see
+ * dataviz skill: "text never wears the data color").
+ */
+const FUNNEL_TINT = {
+  sent: "color-mix(in oklch, var(--chart-orange) 45%, transparent)",
+  viewed: "color-mix(in oklch, var(--chart-orange) 70%, transparent)",
+  closed: "var(--chart-orange)",
+} as const
+/** derived ratios get a lighter, uniform version of the same accent */
+const RATIO_TINT = "color-mix(in oklch, var(--chart-orange) 55%, transparent)"
+
 function StatCard({
   label,
   value,
   sub,
   estimated,
+  icon: Icon,
+  tint,
 }: {
   label: string
   value: React.ReactNode
   sub?: React.ReactNode
   /** some days in range have no Pancake tag figure yet — value includes a self-estimated part */
   estimated?: boolean
+  icon?: LucideIcon
+  /** funnel-stage accent color (see `FUNNEL_TINT`/`RATIO_TINT`) */
+  tint?: string
 }) {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center gap-2 pb-2">
+    <Card
+      className={cn(tint && "border-t-2")}
+      style={tint ? { borderTopColor: tint } : undefined}
+    >
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <CardTitle className="text-sm font-normal text-muted-foreground">
           {label}
         </CardTitle>
-        {estimated ? (
-          <Badge
-            variant="outline"
-            className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400"
-          >
-            <AlertTriangleIcon className="size-3" />
-            Một phần ước tính
-          </Badge>
-        ) : null}
+        <div className="flex shrink-0 items-center gap-2">
+          {estimated ? (
+            <Badge
+              variant="outline"
+              className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400"
+            >
+              <AlertTriangleIcon className="size-3" />
+              Một phần ước tính
+            </Badge>
+          ) : null}
+          {Icon ? (
+            <div
+              className="flex size-7 items-center justify-center rounded-full"
+              style={
+                tint
+                  ? {
+                      backgroundColor: `color-mix(in oklch, ${tint} 16%, transparent)`,
+                    }
+                  : undefined
+              }
+            >
+              <Icon className="size-3.5" style={tint ? { color: tint } : undefined} />
+            </div>
+          ) : null}
+        </div>
       </CardHeader>
       <CardContent>
         <p className="text-2xl font-semibold tabular-nums">{value}</p>
@@ -148,34 +198,46 @@ export function DemoDashboardSection({
             label="Demo đã gửi"
             value={formatInt(report?.team.sent ?? 0)}
             estimated={estimated}
+            icon={SendIcon}
+            tint={FUNNEL_TINT.sent}
           />
           <StatCard
             label="Demo đã xem (cá nhân)"
             value={formatInt(report?.team.viewed ?? 0)}
             estimated={estimated}
+            icon={EyeIcon}
+            tint={FUNNEL_TINT.viewed}
           />
           <StatCard
             label="Demo chốt"
             value={formatInt(report?.team.closed ?? 0)}
             estimated={estimated}
+            icon={CheckCircle2Icon}
+            tint={FUNNEL_TINT.closed}
           />
           <StatCard
             label="Tỉ lệ chốt demo của team"
             value={formatPct(report?.team.teamCloseRate ?? null)}
             sub="đơn chốt / demo đã xem"
             estimated={estimated}
+            icon={TrendingUpIcon}
+            tint={RATIO_TINT}
           />
           <StatCard
             label="Tỉ lệ chốt tổng demo đã gửi"
             value={formatPct(report?.team.sentCloseRate ?? null)}
             sub="đơn chốt / demo đã gửi"
             estimated={estimated}
+            icon={TargetIcon}
+            tint={RATIO_TINT}
           />
           <StatCard
             label="Tỉ lệ phản hồi demo"
             value={formatPct(report?.team.responseRate ?? null)}
             sub="demo đã xem / demo đã gửi"
             estimated={estimated}
+            icon={ReplyIcon}
+            tint={RATIO_TINT}
           />
         </div>
       ) : (
@@ -184,17 +246,23 @@ export function DemoDashboardSection({
             label="Demo đã xem"
             value={formatInt(selectedStaff?.viewed ?? 0)}
             estimated={estimated}
+            icon={EyeIcon}
+            tint={FUNNEL_TINT.viewed}
           />
           <StatCard
             label="Demo chốt"
             value={formatInt(selectedStaff?.closed ?? 0)}
             estimated={estimated}
+            icon={CheckCircle2Icon}
+            tint={FUNNEL_TINT.closed}
           />
           <StatCard
             label="Tỉ lệ chốt"
             value={formatPct(selectedStaff?.closeRate ?? null)}
             sub="đơn chốt / demo đã xem"
             estimated={estimated}
+            icon={TrendingUpIcon}
+            tint={RATIO_TINT}
           />
         </div>
       )}
