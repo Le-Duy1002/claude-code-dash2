@@ -21,6 +21,7 @@ import {
   fetchConversationsSince,
   fetchMessages,
   fetchOrdersSince,
+  fetchPageStatistics,
   fetchPageTags,
   hasInboxToken,
   pancakePages,
@@ -55,6 +56,7 @@ import {
   type BucketTree,
   type DemoFunnelStats,
   type PageHourlyStats,
+  type PancakeDayStat,
   type ShiftBucketKey,
 } from "../types"
 
@@ -925,9 +927,15 @@ async function buildDay(
   }
 
   const ref = adminDb().collection("pancakeAgentDaily").doc(dateISO)
-  const existing = fresh
-    ? undefined
-    : ((await ref.get().catch(() => null))?.data() as AgentDayDoc | undefined)
+  // Always read, even when `fresh`: `pancakeStats` is independent of the
+  // inbox regrade/rebuild this flag controls (it comes from
+  // `syncPancakeStatistics`, run earlier in the same `syncDays` call), and
+  // the `.set()` below replaces the whole document — skipping this read on
+  // a fresh rebuild would silently erase whatever was just captured there.
+  const existingDoc = (await ref.get().catch(() => null))?.data() as
+    | AgentDayDoc
+    | undefined
+  const existing = fresh ? undefined : existingDoc
   const regrade =
     existing != null && (existing.rulesVersion ?? 1) < RULES_VERSION
   const processed = new Set<string>(
@@ -995,6 +1003,7 @@ async function buildDay(
     inboxData,
     pageHourly,
     demoFunnel,
+    pancakeStats: existingDoc?.pancakeStats ?? {},
     processedConvIds: [...processed].slice(-4000),
     warnings: [...new Set([...warnings, ...inputs.flatMap((i) => i.warnings)])],
     rulesVersion: RULES_VERSION,
@@ -1038,6 +1047,57 @@ async function loadOnDuty(dates: string[]): Promise<OnDuty> {
     if (!cell.cover?.length) return null
     return coverByHour(cell.cover)[vnHour(atMs)] ?? cell.staff
   }
+}
+
+/**
+ * Capture Pancake's OWN per-day stats (`/statistics` — see `fetchPageStatistics`)
+ * for every page, and merge them into whichever `pancakeAgentDaily/{date}`
+ * docs that endpoint's fixed 16-day window currently covers. Called on EVERY
+ * `syncDays` call (cron, manual sync, auto-sync-on-open all go through it,
+ * every ~30 min at worst) so the window is re-captured often enough that no
+ * day ever passes through it unrecorded — once a day's figure lands here it
+ * is kept as-is, never recomputed from our own crawl. This is the only way
+ * to reach back further than the live window: by having already saved it
+ * while it was still inside.
+ */
+export async function syncPancakeStatistics(): Promise<{
+  datesWritten: string[]
+  warnings: string[]
+}> {
+  const pages = pancakePages().filter((p) => p.fbPageId)
+  if (!hasInboxToken() || pages.length === 0) {
+    return { datesWritten: [], warnings: [] }
+  }
+  const warnings: string[] = []
+  const byDate = new Map<string, Record<string, PancakeDayStat>>()
+  await Promise.all(
+    pages.map(async (page) => {
+      try {
+        const stats = await fetchPageStatistics(page.fbPageId)
+        for (const { date, ...rest } of stats) {
+          const entry = byDate.get(date) ?? {}
+          entry[page.fbPageId] = rest
+          byDate.set(date, entry)
+        }
+      } catch (error) {
+        warnings.push(`${page.name}: thống kê Pancake — ${(error as Error).message}`)
+      }
+    })
+  )
+  const dates = [...byDate.keys()]
+  if (dates.length === 0) return { datesWritten: [], warnings }
+
+  const coll = adminDb().collection("pancakeAgentDaily")
+  const batch = adminDb().batch()
+  for (const date of dates) {
+    batch.set(
+      coll.doc(date),
+      { pancakeStats: byDate.get(date), updatedAt: FieldValue.serverTimestamp() },
+      { merge: true }
+    )
+  }
+  await batch.commit()
+  return { datesWritten: dates, warnings }
 }
 
 export type SyncDaysResult = {
@@ -1090,7 +1150,7 @@ export async function syncDays(
   const startedAt = Date.now()
   const phase1DeadlineMs = startedAt + CRAWL_TIME_BUDGET_MS
   const routeDeadlineMs = startedAt + ROUTE_TIME_BUDGET_MS
-  const [inputs, onDuty] = await Promise.all([
+  const [inputs, onDuty, statsResult] = await Promise.all([
     Promise.all(
       pages.map((page) =>
         fetchPageInputs(
@@ -1102,6 +1162,7 @@ export async function syncDays(
       )
     ),
     loadOnDuty(pending),
+    syncPancakeStatistics(),
   ])
 
   const out: AgentDayDoc[] = []
@@ -1125,7 +1186,9 @@ export async function syncDays(
   const finished = new Set(out.filter((d) => !d.partial).map((d) => d.date))
   const built = new Set(out.map((d) => d.date))
   const unfinished = pending.filter((d) => !finished.has(d))
-  const errors = [...new Set(inputs.flatMap((pi) => pi.warnings))]
+  const errors = [
+    ...new Set([...inputs.flatMap((pi) => pi.warnings), ...statsResult.warnings]),
+  ]
 
   let resumeOut: WalkResume | null = null
   let walkAdvanced = false

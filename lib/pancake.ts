@@ -512,6 +512,73 @@ export async function fetchConversationsSince(
   }
 }
 
+// ------------------------------------------------- INBOX: daily statistics
+
+/**
+ * Pancake's OWN per-day analytics for a page — the numbers its own dashboard
+ * shows (confirmed 09/10/2026: `newInboxCount` for "4.10" = 188, exactly
+ * matching the Pancake dashboard screenshot, vs. our own crawl-derived count
+ * of 216 for the same day — a real definitional difference, not a bug on
+ * either side). Undocumented endpoint, no query params accepted: it ALWAYS
+ * returns a fixed 16-day rolling window ending today (tried 10+ date-range
+ * param variants, none changed it), so there is no way to ask it for an
+ * arbitrary past day — only to keep capturing this window regularly enough
+ * that every day passes through it at least once (see `syncPancakeStatistics`).
+ */
+export type PancakeDayStat = {
+  date: string // YYYY-MM-DD, Vietnam calendar day
+  newInboxCount: number
+  newCustomer: number
+  totalMsgByCustomer: number
+  totalMsgByPage: number
+  totalInboxMessage: number
+  totalComment: number
+  inboxInteractiveCount: number
+}
+
+const VN_OFFSET_MS = 7 * 60 * 60 * 1000
+const DAY_MS = 86_400_000
+
+/** `YYYY-MM-DD` for Vietnam-local midnight `daysAgo` days before today. */
+function vnDateDaysAgo(daysAgo: number): string {
+  const today = Math.floor((Date.now() + VN_OFFSET_MS) / DAY_MS) * DAY_MS
+  const d = new Date(today - daysAgo * DAY_MS)
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(
+    d.getUTCDate()
+  ).padStart(2, "0")}`
+}
+
+/**
+ * This page's last 16 Vietnam days of Pancake's own daily stats, oldest
+ * first — `categories` carries no year and the endpoint gives no other way
+ * to date its entries, so dates are assigned positionally (confirmed: 16
+ * entries, last one always today).
+ */
+export async function fetchPageStatistics(fbPageId: string): Promise<PancakeDayStat[]> {
+  const url = new URL(`${INBOX_BASE}/pages/${fbPageId}/statistics`)
+  url.searchParams.set("access_token", INBOX_TOKEN)
+  const body = await inboxJson<{
+    data?: { by_date?: { categories?: string[]; series?: { name: string; data: number[] }[] } }
+  }>(url.toString())
+  const categories = body.data?.by_date?.categories ?? []
+  const series = body.data?.by_date?.series ?? []
+  const n = categories.length
+  if (n === 0) return []
+  const dates = Array.from({ length: n }, (_, i) => vnDateDaysAgo(n - 1 - i))
+  const seriesByName = new Map(series.map((s) => [s.name, s.data ?? []]))
+  const at = (name: string, i: number) => Number(seriesByName.get(name)?.[i] ?? 0)
+  return dates.map((date, i) => ({
+    date,
+    newInboxCount: at("newInboxCount", i),
+    newCustomer: at("newCustomer", i),
+    totalMsgByCustomer: at("totalMsgByCustomer", i),
+    totalMsgByPage: at("totalMsgByPage", i),
+    totalInboxMessage: at("totalInboxMessage", i),
+    totalComment: at("totalComment", i),
+    inboxInteractiveCount: at("inboxInteractiveCount", i),
+  }))
+}
+
 // ---------------------------------------------------------- INBOX: messages
 
 export type PancakeMessage = {

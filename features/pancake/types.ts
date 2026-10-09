@@ -112,6 +112,14 @@ export type PageDashboardReport = {
   }[]
   lastSyncedAtMs: number | null
   missingDays: string[]
+  /**
+   * Days where `newConversations` is OUR OWN crawl-derived estimate, not
+   * Pancake's own number (either because an hour filter is active — Pancake
+   * has no hourly breakdown — or this day never fell inside the
+   * `/statistics` endpoint's 16-day window during a sync). Surfaced so the
+   * UI can caveat the number instead of presenting it as Pancake-exact.
+   */
+  estimatedDays: string[]
   warnings: string[]
 }
 
@@ -448,6 +456,27 @@ export type AgentDayDoc = {
    * synced before this was added.
    */
   demoFunnel?: Record<string, DemoFunnelStats>
+  /**
+   * Pancake's OWN per-day analytics for this day, by page — captured
+   * whenever this day happened to fall inside the `/statistics` endpoint's
+   * fixed 16-day rolling window during a sync (see `fetchPageStatistics`).
+   * Absent for days outside that window at every sync that has run so far;
+   * the dashboard then falls back to `pageHourly` and flags it as an
+   * estimate. Once present, never recomputed — it IS Pancake's number for
+   * that day, not something to re-derive.
+   */
+  pancakeStats?: Record<string, PancakeDayStat>
+}
+
+/** Pancake's own per-day figures for one page — see `fetchPageStatistics`. */
+export type PancakeDayStat = {
+  newInboxCount: number
+  newCustomer: number
+  totalMsgByCustomer: number
+  totalMsgByPage: number
+  totalInboxMessage: number
+  totalComment: number
+  inboxInteractiveCount: number
 }
 
 /** 24-element arrays, index = Vietnam local hour (0–23). */
