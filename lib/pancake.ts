@@ -610,6 +610,100 @@ export async function fetchWebPageStatistics(
   })
 }
 
+/**
+ * Per-tag, per-day counts from Pancake's own "Thẻ hội thoại" analytics
+ * (`pancake.vn/api/v1/statistics/tags` — found via the user's DevTools,
+ * same auth as `fetchWebPageStatistics`). Each day's value is NET tagging
+ * events (số lần gắn thẻ − số lần gỡ thẻ that day — Pancake's own stated
+ * definition, confirmed by matching the user's screenshot digit-for-digit
+ * across 12 days including negative ones), NOT a snapshot of how many
+ * conversations currently carry the tag.
+ *
+ * This is a genuinely different count than our own tag-crawl (which buckets
+ * a tagged conversation into the day its last customer message fell on,
+ * regardless of which day the tag was actually applied) — confirmed by
+ * cross-checking a week of real data: "closed" tags (Duy/Hà/Thương/Quyền
+ * Chốt) matched our crawl almost exactly, but "sent"/"viewed" tags
+ * (demo/HDemo/DDemo/TDemo/QDemo) were consistently lower here, the same
+ * kind of gap as `new_inbox_count` vs. our own day-bucketed count. Pancake's
+ * number is what the user wants shown.
+ *
+ * Only ever call this with ONE page id: a multi-page `page_ids` call keys
+ * `series` by an opaque per-tag-text composite id instead of the page's own
+ * numeric tag id, which `tags_list` no longer explains.
+ */
+export async function fetchWebTagStatistics(
+  fbPageId: string,
+  fromISO: string,
+  toISO: string
+): Promise<{
+  dates: string[]
+  /** tag id -> one count per date (same order as `dates`) */
+  totalsByTagId: Record<string, number[]>
+  /** tag id -> tag text, lowercased + trimmed to match `TAG_NAMES`/`DEMO_*_TAG_BY_STAFF` */
+  tagText: Record<string, string>
+}> {
+  const dateRange = `${toPancakeDate(fromISO)} 00:00:00 - ${toPancakeDate(toISO)} 23:59:59`
+  const url = new URL("https://pancake.vn/api/v1/statistics/tags")
+  url.searchParams.set("date_range", dateRange)
+  url.searchParams.set("statistic_type", "day")
+  url.searchParams.set("access_token", INBOX_TOKEN)
+
+  const boundary = "----pancakeDashTagStats"
+  const body = `--${boundary}\r\nContent-Disposition: form-data; name="page_ids"\r\n\r\n${fbPageId}\r\n--${boundary}--\r\n`
+
+  const res = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": `multipart/form-data; boundary=${boundary}`,
+    },
+    body,
+    cache: "no-store",
+  })
+  const json = (await res.json().catch(() => null)) as {
+    data?: { categories?: string[]; series?: Record<string, { total?: number }[]> }
+    success?: boolean
+    message?: string
+    tags_list?: Record<string, { text?: string }>
+  } | null
+  if (!res.ok || !json?.success) {
+    throw new Error(
+      `Pancake ${res.status} pancake.vn/statistics/tags — ${json?.message ?? "lỗi không rõ"}`
+    )
+  }
+
+  const n = json.data?.categories?.length ?? 0
+  const dates: string[] = []
+  {
+    // `categories` is always consecutive days from fromISO to toISO, oldest
+    // first — walk the range ourselves rather than parsing "DD/MM" labels
+    // (no year, same ambiguity `fetchWebPageStatistics` avoids).
+    let cursor = fromISO
+    for (let i = 0; i < n; i += 1) {
+      dates.push(cursor)
+      const [y, m, d] = cursor.split("-").map(Number)
+      const next = new Date(Date.UTC(y, m - 1, d + 1))
+      cursor = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`
+    }
+  }
+
+  const series = json.data?.series ?? {}
+  const totalsByTagId: Record<string, number[]> = {}
+  const tagText: Record<string, string> = {}
+  for (const [id, info] of Object.entries(json.tags_list ?? {})) {
+    if (!info.text) continue
+    tagText[id] = info.text.trim().toLowerCase()
+    // single-page calls key the real (nonzero) series under "tag_<id>"; the
+    // plain "<id>" key exists too but is always zero — not documented
+    // anywhere, just observed, so fall back to it defensively.
+    const rows = series[`tag_${id}`] ?? series[id] ?? []
+    totalsByTagId[id] = dates.map((_, i) => Number(rows[i]?.total ?? 0))
+  }
+
+  return { dates, totalsByTagId, tagText }
+}
+
 // ---------------------------------------------------------- INBOX: messages
 
 export type PancakeMessage = {

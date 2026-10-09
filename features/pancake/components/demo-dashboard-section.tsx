@@ -4,6 +4,7 @@ import * as React from "react"
 import { AlertTriangleIcon } from "lucide-react"
 
 import { useAuth } from "@/components/auth-provider"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -24,17 +25,29 @@ function StatCard({
   label,
   value,
   sub,
+  estimated,
 }: {
   label: string
   value: React.ReactNode
   sub?: React.ReactNode
+  /** some days in range have no Pancake tag figure yet — value includes a self-estimated part */
+  estimated?: boolean
 }) {
   return (
     <Card>
-      <CardHeader className="pb-2">
+      <CardHeader className="flex flex-row items-center gap-2 pb-2">
         <CardTitle className="text-sm font-normal text-muted-foreground">
           {label}
         </CardTitle>
+        {estimated ? (
+          <Badge
+            variant="outline"
+            className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400"
+          >
+            <AlertTriangleIcon className="size-3" />
+            Một phần ước tính
+          </Badge>
+        ) : null}
       </CardHeader>
       <CardContent>
         <p className="text-2xl font-semibold tabular-nums">{value}</p>
@@ -83,6 +96,7 @@ export function DemoDashboardSection({
 
   const staff = report?.staff ?? []
   const selectedStaff = staff.find((s) => s.key === person)
+  const estimated = (report?.estimatedDays.length ?? 0) > 0
 
   return (
     <div className="flex flex-col gap-4">
@@ -130,26 +144,38 @@ export function DemoDashboardSection({
         </div>
       ) : person === "team" ? (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <StatCard label="Demo đã gửi" value={formatInt(report?.team.sent ?? 0)} />
+          <StatCard
+            label="Demo đã gửi"
+            value={formatInt(report?.team.sent ?? 0)}
+            estimated={estimated}
+          />
           <StatCard
             label="Demo đã xem (cá nhân)"
             value={formatInt(report?.team.viewed ?? 0)}
+            estimated={estimated}
           />
-          <StatCard label="Demo chốt" value={formatInt(report?.team.closed ?? 0)} />
+          <StatCard
+            label="Demo chốt"
+            value={formatInt(report?.team.closed ?? 0)}
+            estimated={estimated}
+          />
           <StatCard
             label="Tỉ lệ chốt demo của team"
             value={formatPct(report?.team.teamCloseRate ?? null)}
             sub="đơn chốt / demo đã xem"
+            estimated={estimated}
           />
           <StatCard
             label="Tỉ lệ chốt tổng demo đã gửi"
             value={formatPct(report?.team.sentCloseRate ?? null)}
             sub="đơn chốt / demo đã gửi"
+            estimated={estimated}
           />
           <StatCard
             label="Tỉ lệ phản hồi demo"
             value={formatPct(report?.team.responseRate ?? null)}
             sub="demo đã xem / demo đã gửi"
+            estimated={estimated}
           />
         </div>
       ) : (
@@ -157,12 +183,18 @@ export function DemoDashboardSection({
           <StatCard
             label="Demo đã xem"
             value={formatInt(selectedStaff?.viewed ?? 0)}
+            estimated={estimated}
           />
-          <StatCard label="Demo chốt" value={formatInt(selectedStaff?.closed ?? 0)} />
+          <StatCard
+            label="Demo chốt"
+            value={formatInt(selectedStaff?.closed ?? 0)}
+            estimated={estimated}
+          />
           <StatCard
             label="Tỉ lệ chốt"
             value={formatPct(selectedStaff?.closeRate ?? null)}
             sub="đơn chốt / demo đã xem"
+            estimated={estimated}
           />
         </div>
       )}

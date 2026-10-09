@@ -164,6 +164,8 @@ export type DemoDashboardReport = {
     byStaff: Record<string, { viewed: number; closed: number }>
   }[]
   missingDays: string[]
+  /** dates using our own tag-crawl count instead of Pancake's own tag-event number — see `AgentDayDoc.pancakeDemoStats` */
+  estimatedDays: string[]
   warnings: string[]
 }
 
@@ -468,6 +470,17 @@ export type AgentDayDoc = {
    * re-derive.
    */
   pancakeStats?: Record<string, PancakeDayStat>
+  /**
+   * Pancake's OWN per-day demo-tag figures for this day, by page — fetched
+   * from `pancake.vn/api/v1/statistics/tags` (see `fetchWebTagStatistics`
+   * and `syncPancakeTagStatistics`) whenever this date was part of a
+   * `syncDays` call's range. Same shape as `demoFunnel`, but each number is
+   * Pancake's own net tag-event count for the day rather than our
+   * conversation-crawl count — the two can legitimately differ (see
+   * `fetchWebTagStatistics`'s doc comment). Absent for a date never synced
+   * since this was added; the dashboard then falls back to `demoFunnel`.
+   */
+  pancakeDemoStats?: Record<string, DemoFunnelStats>
 }
 
 /** Pancake's own per-day figures for one page — see `fetchWebPageStatistics`. */

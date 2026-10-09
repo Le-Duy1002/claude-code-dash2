@@ -23,6 +23,7 @@ import {
   fetchOrdersSince,
   fetchPageTags,
   fetchWebPageStatistics,
+  fetchWebTagStatistics,
   hasInboxToken,
   pancakePages,
   type PancakeConversation,
@@ -1004,6 +1005,7 @@ async function buildDay(
     pageHourly,
     demoFunnel,
     pancakeStats: existingDoc?.pancakeStats ?? {},
+    pancakeDemoStats: existingDoc?.pancakeDemoStats ?? {},
     processedConvIds: [...processed].slice(-4000),
     warnings: [...new Set([...warnings, ...inputs.flatMap((i) => i.warnings)])],
     rulesVersion: RULES_VERSION,
@@ -1102,6 +1104,87 @@ export async function syncPancakeStatistics(dates: string[]): Promise<{
   return { datesWritten: written, warnings }
 }
 
+/**
+ * Same idea as `syncPancakeStatistics`, for the demo tag funnel: capture
+ * Pancake's OWN per-day, per-tag counts (`pancake.vn/.../statistics/tags` —
+ * see `fetchWebTagStatistics`) for exactly the dates a `syncDays` call is
+ * working on, matched to `TAG_NAMES.demo`/`DEMO_VIEWED_TAG_BY_STAFF`/
+ * `DEMO_CLOSED_TAG_BY_STAFF` by tag TEXT (each page has its own numeric tag
+ * ids — see `DemoTagIds`), and merged into `pancakeAgentDaily/{date}
+ * .pancakeDemoStats`. Always one request per page (never combined —
+ * `fetchWebTagStatistics`'s doc comment explains why).
+ */
+export async function syncPancakeTagStatistics(dates: string[]): Promise<{
+  datesWritten: string[]
+  warnings: string[]
+}> {
+  const pages = pancakePages().filter((p) => p.fbPageId)
+  if (!hasInboxToken() || pages.length === 0 || dates.length === 0) {
+    return { datesWritten: [], warnings: [] }
+  }
+  const sorted = [...dates].sort()
+  const fromISO = sorted[0]
+  const toISO = sorted[sorted.length - 1]
+
+  const warnings: string[] = []
+  const byDate = new Map<string, Record<string, DemoFunnelStats>>()
+  await Promise.all(
+    pages.map(async (page) => {
+      try {
+        const { dates: resultDates, totalsByTagId, tagText } =
+          await fetchWebTagStatistics(page.fbPageId, fromISO, toISO)
+        const idsWhereText = (text: string) =>
+          Object.keys(tagText).filter((id) => tagText[id] === text)
+        const sentIds = idsWhereText(TAG_NAMES.demo)
+        const viewedIds = Object.fromEntries(
+          Object.entries(DEMO_VIEWED_TAG_BY_STAFF).map(([k, text]) => [
+            k,
+            idsWhereText(text),
+          ])
+        )
+        const closedIds = Object.fromEntries(
+          Object.entries(DEMO_CLOSED_TAG_BY_STAFF).map(([k, text]) => [
+            k,
+            idsWhereText(text),
+          ])
+        )
+        const sumAt = (ids: string[], i: number) =>
+          ids.reduce((s, id) => s + (totalsByTagId[id]?.[i] ?? 0), 0)
+
+        resultDates.forEach((date, i) => {
+          const stats = emptyDemoFunnelStats()
+          stats.sent = sumAt(sentIds, i)
+          for (const staffKey of Object.keys(DEMO_VIEWED_TAG_BY_STAFF)) {
+            stats.byStaff[staffKey] = {
+              viewed: sumAt(viewedIds[staffKey] ?? [], i),
+              closed: sumAt(closedIds[staffKey] ?? [], i),
+            }
+          }
+          const entry = byDate.get(date) ?? {}
+          entry[page.fbPageId] = stats
+          byDate.set(date, entry)
+        })
+      } catch (error) {
+        warnings.push(`${page.name}: thống kê thẻ Pancake — ${(error as Error).message}`)
+      }
+    })
+  )
+  const written = [...byDate.keys()]
+  if (written.length === 0) return { datesWritten: [], warnings }
+
+  const coll = adminDb().collection("pancakeAgentDaily")
+  const batch = adminDb().batch()
+  for (const date of written) {
+    batch.set(
+      coll.doc(date),
+      { pancakeDemoStats: byDate.get(date), updatedAt: FieldValue.serverTimestamp() },
+      { merge: true }
+    )
+  }
+  await batch.commit()
+  return { datesWritten: written, warnings }
+}
+
 export type SyncDaysResult = {
   /** the days built this call (a day the walk didn't reach is absent) */
   docs: AgentDayDoc[]
@@ -1152,7 +1235,7 @@ export async function syncDays(
   const startedAt = Date.now()
   const phase1DeadlineMs = startedAt + CRAWL_TIME_BUDGET_MS
   const routeDeadlineMs = startedAt + ROUTE_TIME_BUDGET_MS
-  const [inputs, onDuty, statsResult] = await Promise.all([
+  const [inputs, onDuty, statsResult, tagStatsResult] = await Promise.all([
     Promise.all(
       pages.map((page) =>
         fetchPageInputs(
@@ -1165,6 +1248,7 @@ export async function syncDays(
     ),
     loadOnDuty(pending),
     syncPancakeStatistics(pending),
+    syncPancakeTagStatistics(pending),
   ])
 
   const out: AgentDayDoc[] = []
@@ -1189,7 +1273,11 @@ export async function syncDays(
   const built = new Set(out.map((d) => d.date))
   const unfinished = pending.filter((d) => !finished.has(d))
   const errors = [
-    ...new Set([...inputs.flatMap((pi) => pi.warnings), ...statsResult.warnings]),
+    ...new Set([
+      ...inputs.flatMap((pi) => pi.warnings),
+      ...statsResult.warnings,
+      ...tagStatsResult.warnings,
+    ]),
   ]
 
   let resumeOut: WalkResume | null = null

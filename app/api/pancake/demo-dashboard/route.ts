@@ -54,7 +54,10 @@ function pct(numerator: number, denominator: number): number | null {
  * nhân chốt (tag "{X} Chốt"), summed across both pages (the funnel is about
  * a staff member's own performance, not split by shop). Same fast
  * already-synced-aggregate pattern as `/api/pancake/dashboard` and
- * `/api/pancake/work-tracking`.
+ * `/api/pancake/work-tracking`. Prefers Pancake's OWN per-tag numbers
+ * (`.pancakeDemoStats`, from `syncPancakeTagStatistics`) over our own
+ * tag-crawl (`.demoFunnel`) for any date that has them — see `estimatedDays`
+ * for which dates fell back.
  */
 export async function GET(request: Request) {
   if (!(await authorize(request))) {
@@ -94,12 +97,22 @@ export async function GET(request: Request) {
     sent: number
     byStaff: Record<string, { viewed: number; closed: number }>
   }[] = []
+  const estimatedDays = new Set<string>()
 
   for (const date of dates) {
     const doc = docByDate.get(date)
+    // Pancake's own per-tag numbers (`pancakeDemoStats`) when this date has
+    // them; our own tag-crawl (`demoFunnel`) otherwise — the two can
+    // legitimately disagree (see `fetchWebTagStatistics`'s doc comment), so
+    // this is an either/or per day, not a merge.
+    const bothHavePancake =
+      doc?.pancakeDemoStats && Object.keys(doc.pancakeDemoStats).length > 0
+    const source = bothHavePancake ? doc.pancakeDemoStats! : (doc?.demoFunnel ?? {})
+    if (doc && !bothHavePancake) estimatedDays.add(date)
+
     let daySent = 0
     const dayByStaff: Record<string, { viewed: number; closed: number }> = {}
-    for (const funnel of Object.values(doc?.demoFunnel ?? {})) {
+    for (const funnel of Object.values(source)) {
       daySent += funnel.sent
       for (const [key, acc] of byStaff) {
         const s = funnel.byStaff[key]
@@ -139,6 +152,15 @@ export async function GET(request: Request) {
       "Một số ngày đã đồng bộ từ trước khi có thống kê demo — bấm \"Đồng bộ ngay\" để cập nhật."
     )
   }
+  if (estimatedDays.size > 0) {
+    warnings.push(
+      `${estimatedDays.size} ngày chưa có số thẻ demo từ Pancake, đang dùng số tự quét (ước tính): ${[
+        ...estimatedDays,
+      ]
+        .slice(0, 6)
+        .join(", ")}${estimatedDays.size > 6 ? "…" : ""}.`
+    )
+  }
 
   return NextResponse.json({
     fromMs,
@@ -156,6 +178,7 @@ export async function GET(request: Request) {
     },
     daily,
     missingDays,
+    estimatedDays: [...estimatedDays],
     warnings,
   })
 }
