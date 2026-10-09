@@ -42,17 +42,29 @@ function StatCard({
   label,
   value,
   sub,
+  estimated,
 }: {
   label: string
   value: React.ReactNode
   sub?: React.ReactNode
+  /** some days in range have no Pancake figure yet — value includes a self-estimated part */
+  estimated?: boolean
 }) {
   return (
     <Card>
-      <CardHeader className="pb-2">
+      <CardHeader className="flex flex-row items-center gap-2 pb-2">
         <CardTitle className="text-sm font-normal text-muted-foreground">
           {label}
         </CardTitle>
+        {estimated ? (
+          <Badge
+            variant="outline"
+            className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400"
+          >
+            <AlertTriangleIcon className="size-3" />
+            Một phần ước tính
+          </Badge>
+        ) : null}
       </CardHeader>
       <CardContent>
         <p className="text-2xl font-semibold tabular-nums">{value}</p>
@@ -288,16 +300,22 @@ export function PageDashboardView() {
                 <StatCard
                   label="Hội thoại mới"
                   value={formatInt(selected?.newConversations ?? 0)}
+                  estimated={(report?.estimatedDays.newConversations.length ?? 0) > 0}
                 />
                 <StatCard
                   label="Đơn chốt"
                   value={formatInt(selected?.ordersClosed ?? 0)}
                   sub={`/ ${formatInt(selected?.ordersTotal ?? 0)} tổng đơn`}
+                  estimated={(report?.estimatedDays.ordersClosed.length ?? 0) > 0}
                 />
                 <StatCard
                   label="Tỉ lệ chốt"
                   value={formatPct(selected?.closeRate ?? null)}
                   sub="đơn chốt / hội thoại mới"
+                  estimated={
+                    (report?.estimatedDays.newConversations.length ?? 0) > 0 ||
+                    (report?.estimatedDays.ordersClosed.length ?? 0) > 0
+                  }
                 />
               </>
             )}

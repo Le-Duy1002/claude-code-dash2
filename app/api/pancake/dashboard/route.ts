@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { adminAuth, adminDb } from "@/lib/firebase-admin"
-import { pancakePages } from "@/lib/pancake"
+import { ORDER_COUNT_FLOOR, pancakePages } from "@/lib/pancake"
 import {
   resolveReportRange,
   vnDatesInRange,
@@ -136,7 +136,11 @@ export async function GET(request: Request) {
     allPages.map((p) => [p.fbPageId, emptyTotal()])
   )
   const daily: { date: string; byPage: Record<string, PageTotal> }[] = []
-  const estimatedDays = new Set<string>()
+  // Tracked separately — a day can have Pancake's real "Hội thoại mới" but
+  // not yet "Đơn chốt" (or vice versa), e.g. anything before
+  // `ORDER_COUNT_FLOOR`, so a combined flag would over- or under-warn.
+  const estimatedConvDays = new Set<string>()
+  const estimatedOrderDays = new Set<string>()
 
   for (const date of dates) {
     const doc = docByDate.get(date)
@@ -149,14 +153,14 @@ export async function GET(request: Request) {
         newConversations = pancakeStat.newInboxCount
       } else {
         newConversations = stats ? sumHours(stats.newConversations) : 0
-        if (doc) estimatedDays.add(date)
+        if (doc) estimatedConvDays.add(date)
       }
       let ordersClosed: number
       if (fullDay && pancakeStat?.orderCount != null) {
         ordersClosed = pancakeStat.orderCount
       } else {
         ordersClosed = stats ? sumHours(stats.ordersClosed) : 0
-        if (doc) estimatedDays.add(date)
+        if (doc) estimatedOrderDays.add(date)
       }
       const t: PageTotal = {
         newConversations,
@@ -211,12 +215,21 @@ export async function GET(request: Request) {
       "Một số ngày đã đồng bộ từ trước khi có thống kê theo trang — bấm \"Đồng bộ ngay\" để cập nhật."
     )
   }
-  if (estimatedDays.size > 0) {
-    warnings.push(
-      fullDay
-        ? `${estimatedDays.size} ngày chưa có đủ số chính xác từ Pancake ("Hội thoại mới"/"Đơn chốt") — đang dùng số tự quét (ước tính) cho phần còn thiếu.`
-        : `Lọc theo giờ dùng số tự quét (ước tính) — Pancake không chia theo giờ.`
-    )
+  const listDays = (ds: string[]) =>
+    `${ds.slice(0, 6).join(", ")}${ds.length > 6 ? "…" : ""}`
+  if (!fullDay && (estimatedConvDays.size > 0 || estimatedOrderDays.size > 0)) {
+    warnings.push(`Lọc theo giờ dùng số tự quét (ước tính) — Pancake không chia theo giờ.`)
+  } else {
+    if (estimatedConvDays.size > 0) {
+      warnings.push(
+        `"Hội thoại mới" của ${estimatedConvDays.size} ngày chưa có số từ Pancake, đang dùng số tự quét (ước tính): ${listDays([...estimatedConvDays])}.`
+      )
+    }
+    if (estimatedOrderDays.size > 0) {
+      warnings.push(
+        `"Đơn chốt" của ${estimatedOrderDays.size} ngày chưa có số từ Pancake (trước ${ORDER_COUNT_FLOOR} hoặc chưa đồng bộ), đang dùng số tự quét (ước tính): ${listDays([...estimatedOrderDays])}.`
+      )
+    }
   }
 
   return NextResponse.json({
@@ -228,7 +241,10 @@ export async function GET(request: Request) {
     pages,
     combined: { ...combinedTotal, closeRate: closeRate(combinedTotal) },
     daily,
-    estimatedDays: [...estimatedDays],
+    estimatedDays: {
+      newConversations: [...estimatedConvDays],
+      ordersClosed: [...estimatedOrderDays],
+    },
     lastSyncedAtMs,
     missingDays,
     warnings,

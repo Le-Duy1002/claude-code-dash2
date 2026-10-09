@@ -113,13 +113,15 @@ export type PageDashboardReport = {
   lastSyncedAtMs: number | null
   missingDays: string[]
   /**
-   * Days where `newConversations` is OUR OWN crawl-derived estimate, not
-   * Pancake's own number (either because an hour filter is active — Pancake
-   * has no hourly breakdown — or this day never fell inside the
-   * `/statistics` endpoint's 16-day window during a sync). Surfaced so the
-   * UI can caveat the number instead of presenting it as Pancake-exact.
+   * Dates where the metric is OUR OWN crawl-derived estimate, not Pancake's
+   * own number (an hour filter is active — Pancake has no hourly breakdown
+   * — or Pancake has no figure for that date yet: before `ORDER_COUNT_FLOOR`
+   * for orders, or simply never synced since `pancakeStats` was added).
+   * Tracked separately per metric since a date can have one without the
+   * other. Surfaced so the UI can caveat the number instead of presenting
+   * it as Pancake-exact.
    */
-  estimatedDays: string[]
+  estimatedDays: { newConversations: string[]; ordersClosed: string[] }
   warnings: string[]
 }
 
