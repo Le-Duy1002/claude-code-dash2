@@ -21,8 +21,8 @@ import {
   fetchConversationsSince,
   fetchMessages,
   fetchOrdersSince,
-  fetchPageStatistics,
   fetchPageTags,
+  fetchWebPageStatistics,
   hasInboxToken,
   pancakePages,
   type PancakeConversation,
@@ -1050,30 +1050,32 @@ async function loadOnDuty(dates: string[]): Promise<OnDuty> {
 }
 
 /**
- * Capture Pancake's OWN per-day stats (`/statistics` — see `fetchPageStatistics`)
- * for every page, and merge them into whichever `pancakeAgentDaily/{date}`
- * docs that endpoint's fixed 16-day window currently covers. Called on EVERY
- * `syncDays` call (cron, manual sync, auto-sync-on-open all go through it,
- * every ~30 min at worst) so the window is re-captured often enough that no
- * day ever passes through it unrecorded — once a day's figure lands here it
- * is kept as-is, never recomputed from our own crawl. This is the only way
- * to reach back further than the live window: by having already saved it
- * while it was still inside.
+ * Capture Pancake's OWN per-day stats (`pancake.vn/.../statistics/page` —
+ * see `fetchWebPageStatistics`) for exactly the dates a `syncDays` call is
+ * working on, and merge them into those `pancakeAgentDaily/{date}` docs.
+ * Unlike the old `pages.fm` endpoint this is keyed on, this one takes an
+ * arbitrary date range, so a deep historical sync backfills Pancake's real
+ * figures for THOSE dates directly — no dependency on catching a rolling
+ * window in time. One request per page regardless of how many `dates`.
  */
-export async function syncPancakeStatistics(): Promise<{
+export async function syncPancakeStatistics(dates: string[]): Promise<{
   datesWritten: string[]
   warnings: string[]
 }> {
   const pages = pancakePages().filter((p) => p.fbPageId)
-  if (!hasInboxToken() || pages.length === 0) {
+  if (!hasInboxToken() || pages.length === 0 || dates.length === 0) {
     return { datesWritten: [], warnings: [] }
   }
+  const sorted = [...dates].sort()
+  const fromISO = sorted[0]
+  const toISO = sorted[sorted.length - 1]
+
   const warnings: string[] = []
   const byDate = new Map<string, Record<string, PancakeDayStat>>()
   await Promise.all(
     pages.map(async (page) => {
       try {
-        const stats = await fetchPageStatistics(page.fbPageId)
+        const stats = await fetchWebPageStatistics(page.fbPageId, fromISO, toISO)
         for (const { date, ...rest } of stats) {
           const entry = byDate.get(date) ?? {}
           entry[page.fbPageId] = rest
@@ -1084,12 +1086,12 @@ export async function syncPancakeStatistics(): Promise<{
       }
     })
   )
-  const dates = [...byDate.keys()]
-  if (dates.length === 0) return { datesWritten: [], warnings }
+  const written = [...byDate.keys()]
+  if (written.length === 0) return { datesWritten: [], warnings }
 
   const coll = adminDb().collection("pancakeAgentDaily")
   const batch = adminDb().batch()
-  for (const date of dates) {
+  for (const date of written) {
     batch.set(
       coll.doc(date),
       { pancakeStats: byDate.get(date), updatedAt: FieldValue.serverTimestamp() },
@@ -1097,7 +1099,7 @@ export async function syncPancakeStatistics(): Promise<{
     )
   }
   await batch.commit()
-  return { datesWritten: dates, warnings }
+  return { datesWritten: written, warnings }
 }
 
 export type SyncDaysResult = {
@@ -1162,7 +1164,7 @@ export async function syncDays(
       )
     ),
     loadOnDuty(pending),
-    syncPancakeStatistics(),
+    syncPancakeStatistics(pending),
   ])
 
   const out: AgentDayDoc[] = []

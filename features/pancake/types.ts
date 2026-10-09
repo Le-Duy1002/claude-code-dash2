@@ -457,26 +457,22 @@ export type AgentDayDoc = {
    */
   demoFunnel?: Record<string, DemoFunnelStats>
   /**
-   * Pancake's OWN per-day analytics for this day, by page — captured
-   * whenever this day happened to fall inside the `/statistics` endpoint's
-   * fixed 16-day rolling window during a sync (see `fetchPageStatistics`).
-   * Absent for days outside that window at every sync that has run so far;
-   * the dashboard then falls back to `pageHourly` and flags it as an
-   * estimate. Once present, never recomputed — it IS Pancake's number for
-   * that day, not something to re-derive.
+   * Pancake's OWN per-day figures for this day, by page — fetched from
+   * `pancake.vn/api/v1/statistics/page` (see `fetchWebPageStatistics`)
+   * whenever this date was part of a `syncDays` call's range. Absent for a
+   * date never synced since this was added; the dashboard then falls back
+   * to `pageHourly` and flags it as an estimate. Once present, never
+   * recomputed — it IS Pancake's number for that day, not something to
+   * re-derive.
    */
   pancakeStats?: Record<string, PancakeDayStat>
 }
 
-/** Pancake's own per-day figures for one page — see `fetchPageStatistics`. */
+/** Pancake's own per-day figures for one page — see `fetchWebPageStatistics`. */
 export type PancakeDayStat = {
   newInboxCount: number
-  newCustomer: number
-  totalMsgByCustomer: number
-  totalMsgByPage: number
-  totalInboxMessage: number
-  totalComment: number
-  inboxInteractiveCount: number
+  /** null when Pancake hadn't computed this yet for the date (see `ORDER_COUNT_FLOOR`) */
+  orderCount: number | null
 }
 
 /** 24-element arrays, index = Vietnam local hour (0–23). */

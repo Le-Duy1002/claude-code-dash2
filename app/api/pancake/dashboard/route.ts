@@ -65,10 +65,13 @@ function closeRate(t: PageTotal): number | null {
 /**
  * Page-level dashboard: new conversations, orders, close rate — gộp chung or
  * per page, filterable by date range AND Vietnam hour-of-day. Reads the
- * already-synced `pancakeAgentDaily/{date}.pageHourly` (no live Pancake
- * calls, same fast pattern as `/api/pancake/work-tracking`) — days not yet
- * synced, or only partially crawled, are flagged in `warnings` rather than
- * silently shown as zero.
+ * already-synced `pancakeAgentDaily/{date}` (no live Pancake calls, same
+ * fast pattern as `/api/pancake/work-tracking`). On a full-day (no hour
+ * filter) request, "new conversations" and "đơn chốt" prefer Pancake's OWN
+ * reported numbers (`.pancakeStats`, from `syncPancakeStatistics`) over our
+ * own crawl-derived `.pageHourly` — see `estimatedDays` for which days
+ * couldn't use it. Days not yet synced, or only partially crawled, are
+ * flagged in `warnings` rather than silently shown as zero.
  */
 export async function GET(request: Request) {
   if (!(await authorize(request))) {
@@ -148,10 +151,17 @@ export async function GET(request: Request) {
         newConversations = stats ? sumHours(stats.newConversations) : 0
         if (doc) estimatedDays.add(date)
       }
+      let ordersClosed: number
+      if (fullDay && pancakeStat?.orderCount != null) {
+        ordersClosed = pancakeStat.orderCount
+      } else {
+        ordersClosed = stats ? sumHours(stats.ordersClosed) : 0
+        if (doc) estimatedDays.add(date)
+      }
       const t: PageTotal = {
         newConversations,
         ordersTotal: stats ? sumHours(stats.ordersTotal) : 0,
-        ordersClosed: stats ? sumHours(stats.ordersClosed) : 0,
+        ordersClosed,
       }
       row[p.fbPageId] = t
       const acc = totalsByPage.get(p.fbPageId)!
@@ -204,8 +214,8 @@ export async function GET(request: Request) {
   if (estimatedDays.size > 0) {
     warnings.push(
       fullDay
-        ? `"Hội thoại mới" của ${estimatedDays.size} ngày chưa có số chính xác từ Pancake (ngoài phạm vi Pancake lưu được) — đang dùng số tự quét (ước tính).`
-        : `Lọc theo giờ dùng số tự quét (ước tính) cho "Hội thoại mới" — Pancake không chia theo giờ.`
+        ? `${estimatedDays.size} ngày chưa có đủ số chính xác từ Pancake ("Hội thoại mới"/"Đơn chốt") — đang dùng số tự quét (ước tính) cho phần còn thiếu.`
+        : `Lọc theo giờ dùng số tự quét (ước tính) — Pancake không chia theo giờ.`
     )
   }
 

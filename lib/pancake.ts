@@ -515,68 +515,99 @@ export async function fetchConversationsSince(
 // ------------------------------------------------- INBOX: daily statistics
 
 /**
- * Pancake's OWN per-day analytics for a page — the numbers its own dashboard
- * shows (confirmed 09/10/2026: `newInboxCount` for "4.10" = 188, exactly
- * matching the Pancake dashboard screenshot, vs. our own crawl-derived count
- * of 216 for the same day — a real definitional difference, not a bug on
- * either side). Undocumented endpoint, no query params accepted: it ALWAYS
- * returns a fixed 16-day rolling window ending today (tried 10+ date-range
- * param variants, none changed it), so there is no way to ask it for an
- * arbitrary past day — only to keep capturing this window regularly enough
- * that every day passes through it at least once (see `syncPancakeStatistics`).
+ * Pancake's OWN per-day numbers for a page — the ones its own "Thống kê >
+ * Trang" screen shows, confirmed against the user's own screenshots
+ * (09–10/10/2026): `new_inbox_count` for 4/10 = 188 (vs. our own
+ * crawl-derived 216 for the same day — a real definitional difference, not a
+ * bug on either side); `order_count` for several Oct days matched our own
+ * crawled `ordersClosed` almost exactly (off by 0–1, from ordinary sync
+ * timing).
+ *
+ * This is the web app's OWN internal endpoint (`pancake.vn`, not the
+ * documented `pages.fm` partner API), found via the user's browser DevTools
+ * — but it accepts the SAME `access_token` as a query param, no browser
+ * session/cookie needed. Unlike `pages.fm/.../statistics` (a fixed 16-day
+ * rolling window, no date params honored), THIS endpoint takes an arbitrary
+ * `date_range`, so any day can be fetched whenever needed, not just whatever
+ * happened to be in-window at sync time.
+ *
+ * `order_count` has a hard floor, though: it reads exactly 0 for every day
+ * before 17/08/2026 (checked daily across the whole of July and August) even
+ * on days we independently know had real closed orders — Pancake evidently
+ * only started computing/storing it from that date. `ORDER_COUNT_FLOOR`
+ * marks that boundary so callers don't mistake "not computed yet" for "zero
+ * orders that day". `new_inbox_count` has no such floor (checked back to
+ * 1/7/2026, always a plausible nonzero count).
  */
 export type PancakeDayStat = {
   date: string // YYYY-MM-DD, Vietnam calendar day
   newInboxCount: number
-  newCustomer: number
-  totalMsgByCustomer: number
-  totalMsgByPage: number
-  totalInboxMessage: number
-  totalComment: number
-  inboxInteractiveCount: number
+  /** null before `ORDER_COUNT_FLOOR` — Pancake has no figure for that day */
+  orderCount: number | null
 }
 
-const VN_OFFSET_MS = 7 * 60 * 60 * 1000
-const DAY_MS = 86_400_000
+/** First Vietnam day `order_count` is populated for (see doc comment above). */
+export const ORDER_COUNT_FLOOR = "2026-08-17"
 
-/** `YYYY-MM-DD` for Vietnam-local midnight `daysAgo` days before today. */
-function vnDateDaysAgo(daysAgo: number): string {
-  const today = Math.floor((Date.now() + VN_OFFSET_MS) / DAY_MS) * DAY_MS
-  const d = new Date(today - daysAgo * DAY_MS)
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(
-    d.getUTCDate()
-  ).padStart(2, "0")}`
+/** `YYYY-MM-DD` (Vietnam day) -> `DD/MM/YYYY` (what `date_range` expects). */
+function toPancakeDate(iso: string): string {
+  const [y, m, d] = iso.split("-")
+  return `${d}/${m}/${y}`
+}
+
+/** `DD/MM/YYYY` (as `time` comes back) -> `YYYY-MM-DD`. */
+function fromPancakeDate(ddmmyyyy: string): string {
+  const [d, m, y] = ddmmyyyy.split("/")
+  return `${y}-${m}-${d}`
 }
 
 /**
- * This page's last 16 Vietnam days of Pancake's own daily stats, oldest
- * first — `categories` carries no year and the endpoint gives no other way
- * to date its entries, so dates are assigned positionally (confirmed: 16
- * entries, last one always today).
+ * This page's Pancake-reported daily stats for `[fromISO, toISO]` (Vietnam
+ * days, inclusive both ends). One request regardless of the span's length.
  */
-export async function fetchPageStatistics(fbPageId: string): Promise<PancakeDayStat[]> {
-  const url = new URL(`${INBOX_BASE}/pages/${fbPageId}/statistics`)
+export async function fetchWebPageStatistics(
+  fbPageId: string,
+  fromISO: string,
+  toISO: string
+): Promise<PancakeDayStat[]> {
+  const dateRange = `${toPancakeDate(fromISO)} 00:00:00 - ${toPancakeDate(toISO)} 23:59:59`
+  const selectFields = JSON.stringify(["new_inbox_count", "order_count"])
+  const url = new URL("https://pancake.vn/api/v1/statistics/page")
+  url.searchParams.set("statistic_type", "day")
+  url.searchParams.set("date_range", dateRange)
+  url.searchParams.set("select_fields", selectFields)
   url.searchParams.set("access_token", INBOX_TOKEN)
-  const body = await inboxJson<{
-    data?: { by_date?: { categories?: string[]; series?: { name: string; data: number[] }[] } }
-  }>(url.toString())
-  const categories = body.data?.by_date?.categories ?? []
-  const series = body.data?.by_date?.series ?? []
-  const n = categories.length
-  if (n === 0) return []
-  const dates = Array.from({ length: n }, (_, i) => vnDateDaysAgo(n - 1 - i))
-  const seriesByName = new Map(series.map((s) => [s.name, s.data ?? []]))
-  const at = (name: string, i: number) => Number(seriesByName.get(name)?.[i] ?? 0)
-  return dates.map((date, i) => ({
-    date,
-    newInboxCount: at("newInboxCount", i),
-    newCustomer: at("newCustomer", i),
-    totalMsgByCustomer: at("totalMsgByCustomer", i),
-    totalMsgByPage: at("totalMsgByPage", i),
-    totalInboxMessage: at("totalInboxMessage", i),
-    totalComment: at("totalComment", i),
-    inboxInteractiveCount: at("inboxInteractiveCount", i),
-  }))
+
+  const boundary = "----pancakeDashStats"
+  const body = `--${boundary}\r\nContent-Disposition: form-data; name="page_ids"\r\n\r\n${fbPageId}\r\n--${boundary}--\r\n`
+
+  const res = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": `multipart/form-data; boundary=${boundary}`,
+    },
+    body,
+    cache: "no-store",
+  })
+  const json = (await res.json().catch(() => null)) as {
+    data?: { time: string; new_inbox_count?: number; order_count?: number }[]
+    success?: boolean
+    message?: string
+  } | null
+  if (!res.ok || !json?.success) {
+    throw new Error(
+      `Pancake ${res.status} pancake.vn/statistics/page — ${json?.message ?? "lỗi không rõ"}`
+    )
+  }
+  return (json.data ?? []).map((row) => {
+    const date = fromPancakeDate(row.time)
+    return {
+      date,
+      newInboxCount: Number(row.new_inbox_count ?? 0),
+      orderCount: date < ORDER_COUNT_FLOOR ? null : Number(row.order_count ?? 0),
+    }
+  })
 }
 
 // ---------------------------------------------------------- INBOX: messages
