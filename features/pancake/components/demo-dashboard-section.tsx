@@ -32,20 +32,14 @@ function formatPct(n: number | null): string {
 }
 
 /**
- * Funnel-stage accent: same validated `--chart-orange` token the page
- * dashboard's chart uses (see `app/globals.css`), stepped by opacity rather
- * than a separate hue ramp — an ordinal "how deep into the funnel" cue
- * (gửi -> xem -> chốt), not a value encoding the reader has to decode, so it
- * stays a quiet icon+border accent and never touches the number itself (see
- * dataviz skill: "text never wears the data color").
+ * Two semantic groups, each its own solid validated hue (same tokens the
+ * page-dashboard chart uses — see `app/globals.css`): raw funnel counts
+ * (gửi/xem/chốt) in orange, derived ratios in blue. Full-strength color on
+ * both the border and the number itself — the user found a faded/opacity
+ * version ("ánh") hard to read, so this stays solid for contrast.
  */
-const FUNNEL_TINT = {
-  sent: "color-mix(in oklch, var(--chart-orange) 45%, transparent)",
-  viewed: "color-mix(in oklch, var(--chart-orange) 70%, transparent)",
-  closed: "var(--chart-orange)",
-} as const
-/** derived ratios get a lighter, uniform version of the same accent */
-const RATIO_TINT = "color-mix(in oklch, var(--chart-orange) 55%, transparent)"
+const FUNNEL_TINT = "var(--chart-orange)"
+const RATIO_TINT = "var(--chart-blue)"
 
 function StatCard({
   label,
@@ -61,46 +55,38 @@ function StatCard({
   /** some days in range have no Pancake tag figure yet — value includes a self-estimated part */
   estimated?: boolean
   icon?: LucideIcon
-  /** funnel-stage accent color (see `FUNNEL_TINT`/`RATIO_TINT`) */
+  /** accent color — see `FUNNEL_TINT`/`RATIO_TINT` */
   tint?: string
 }) {
   return (
     <Card
-      className={cn(tint && "border-t-2")}
-      style={tint ? { borderTopColor: tint } : undefined}
+      className={cn(tint && "border-l-4")}
+      style={tint ? { borderLeftColor: tint } : undefined}
     >
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-        <CardTitle className="text-sm font-normal text-muted-foreground">
+        <CardTitle className="flex items-center gap-1.5 text-sm font-normal text-muted-foreground">
+          {Icon ? (
+            <Icon className="size-3.5 shrink-0" style={tint ? { color: tint } : undefined} />
+          ) : null}
           {label}
         </CardTitle>
-        <div className="flex shrink-0 items-center gap-2">
-          {estimated ? (
-            <Badge
-              variant="outline"
-              className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400"
-            >
-              <AlertTriangleIcon className="size-3" />
-              Một phần ước tính
-            </Badge>
-          ) : null}
-          {Icon ? (
-            <div
-              className="flex size-7 items-center justify-center rounded-full"
-              style={
-                tint
-                  ? {
-                      backgroundColor: `color-mix(in oklch, ${tint} 16%, transparent)`,
-                    }
-                  : undefined
-              }
-            >
-              <Icon className="size-3.5" style={tint ? { color: tint } : undefined} />
-            </div>
-          ) : null}
-        </div>
+        {estimated ? (
+          <Badge
+            variant="outline"
+            className="shrink-0 gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400"
+          >
+            <AlertTriangleIcon className="size-3" />
+            Một phần ước tính
+          </Badge>
+        ) : null}
       </CardHeader>
       <CardContent>
-        <p className="text-2xl font-semibold tabular-nums">{value}</p>
+        <p
+          className="text-2xl font-semibold tabular-nums"
+          style={tint ? { color: tint } : undefined}
+        >
+          {value}
+        </p>
         {sub ? <p className="mt-1 text-xs text-muted-foreground">{sub}</p> : null}
       </CardContent>
     </Card>
@@ -199,21 +185,21 @@ export function DemoDashboardSection({
             value={formatInt(report?.team.sent ?? 0)}
             estimated={estimated}
             icon={SendIcon}
-            tint={FUNNEL_TINT.sent}
+            tint={FUNNEL_TINT}
           />
           <StatCard
             label="Demo đã xem (cá nhân)"
             value={formatInt(report?.team.viewed ?? 0)}
             estimated={estimated}
             icon={EyeIcon}
-            tint={FUNNEL_TINT.viewed}
+            tint={FUNNEL_TINT}
           />
           <StatCard
             label="Demo chốt"
             value={formatInt(report?.team.closed ?? 0)}
             estimated={estimated}
             icon={CheckCircle2Icon}
-            tint={FUNNEL_TINT.closed}
+            tint={FUNNEL_TINT}
           />
           <StatCard
             label="Tỉ lệ chốt demo của team"
@@ -247,14 +233,14 @@ export function DemoDashboardSection({
             value={formatInt(selectedStaff?.viewed ?? 0)}
             estimated={estimated}
             icon={EyeIcon}
-            tint={FUNNEL_TINT.viewed}
+            tint={FUNNEL_TINT}
           />
           <StatCard
             label="Demo chốt"
             value={formatInt(selectedStaff?.closed ?? 0)}
             estimated={estimated}
             icon={CheckCircle2Icon}
-            tint={FUNNEL_TINT.closed}
+            tint={FUNNEL_TINT}
           />
           <StatCard
             label="Tỉ lệ chốt"
