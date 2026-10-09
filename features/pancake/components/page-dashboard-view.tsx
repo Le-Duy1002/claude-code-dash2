@@ -3,7 +3,7 @@
 import * as React from "react"
 import { AlertTriangleIcon, RefreshCwIcon } from "lucide-react"
 import { toast } from "sonner"
-import { CartesianGrid, Line, LineChart, XAxis } from "recharts"
+import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
 
 import { useAuth } from "@/components/auth-provider"
 import { Badge } from "@/components/ui/badge"
@@ -75,7 +75,11 @@ function StatCard({
 }
 
 /** fixed categorical order, never reassigned per filter — see dataviz skill */
-const PAGE_CHART_COLORS = ["var(--chart-2)", "var(--chart-4)", "var(--chart-1)"]
+const PAGE_CHART_COLORS = [
+  "var(--chart-orange)",
+  "var(--chart-blue)",
+  "var(--chart-3)",
+]
 
 export function PageDashboardView() {
   const { user } = useAuth()
@@ -335,7 +339,30 @@ export function PageDashboardView() {
                   config={chartConfig}
                   className="aspect-auto h-[250px] w-full"
                 >
-                  <LineChart data={chartData}>
+                  <AreaChart data={chartData}>
+                    <defs>
+                      {visiblePageIds.map((id) => (
+                        <linearGradient
+                          key={id}
+                          id={`fill-${id}`}
+                          x1="0"
+                          y1="0"
+                          x2="0"
+                          y2="1"
+                        >
+                          <stop
+                            offset="5%"
+                            stopColor={`var(--color-${id})`}
+                            stopOpacity={0.35}
+                          />
+                          <stop
+                            offset="95%"
+                            stopColor={`var(--color-${id})`}
+                            stopOpacity={0.02}
+                          />
+                        </linearGradient>
+                      ))}
+                    </defs>
                     <CartesianGrid vertical={false} />
                     <XAxis
                       dataKey="date"
@@ -346,23 +373,27 @@ export function PageDashboardView() {
                       tickFormatter={(value: string) => value.slice(5)}
                     />
                     <ChartTooltip
-                      cursor={false}
+                      cursor={{ stroke: "var(--border)", strokeWidth: 1 }}
                       content={<ChartTooltipContent indicator="line" />}
                     />
                     {visiblePageIds.length > 1 ? (
                       <ChartLegend content={<ChartLegendContent />} />
                     ) : null}
                     {visiblePageIds.map((id) => (
-                      <Line
+                      <Area
                         key={id}
                         dataKey={id}
-                        type="monotone"
+                        type="natural"
                         stroke={`var(--color-${id})`}
                         strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        fill={`url(#fill-${id})`}
                         dot={false}
+                        activeDot={{ r: 5, strokeWidth: 2, stroke: "var(--card)" }}
                       />
                     ))}
-                  </LineChart>
+                  </AreaChart>
                 </ChartContainer>
               )}
             </CardContent>
