@@ -5,7 +5,7 @@ import Image from "next/image"
 import Link from "next/link"
 
 import { NavDocuments } from "@/components/nav-documents"
-import { NavMain } from "@/components/nav-main"
+import { NavMain, type NavSection } from "@/components/nav-main"
 import { NavSecondary } from "@/components/nav-secondary"
 import { NavUser } from "@/components/nav-user"
 import {
@@ -25,72 +25,63 @@ const data = {
     email: "m@example.com",
     avatar: "/avatars/shadcn.jpg",
   },
-  navMain: [
+  navSections: [
     {
-      title: "Chỉ số",
-      url: "/thong-ke-trang",
-      icon: (
-        <LineChartIcon
-        />
-      ),
+      label: "Theo dõi",
+      items: [
+        {
+          title: "Chỉ số",
+          url: "/thong-ke-trang",
+          icon: <LineChartIcon />,
+        },
+        {
+          title: "Lịch làm",
+          url: "/lich-lam-viec",
+          icon: <CalendarDaysIcon />,
+        },
+        {
+          title: "Rà soát công việc",
+          url: "/theo-doi-cong-viec",
+          icon: <GaugeIcon />,
+        },
+        {
+          title: "Chi tiết cá nhân",
+          url: "/nhat-ky-ai",
+          icon: <CalendarClockIcon />,
+        },
+      ],
     },
     {
-      title: "Lịch làm",
-      url: "/lich-lam-viec",
-      icon: (
-        <CalendarDaysIcon
-        />
-      ),
+      label: "Làm việc",
+      items: [
+        {
+          title: "Dự án",
+          url: "/du-an",
+          icon: <FolderIcon />,
+        },
+        {
+          title: "Công việc",
+          url: "/dashboard/task",
+          icon: <ClipboardListIcon />,
+        },
+        {
+          title: "Tài liệu chung",
+          url: "/documents",
+          icon: <FolderOpenIcon />,
+        },
+      ],
     },
     {
-      title: "Rà soát công việc",
-      url: "/theo-doi-cong-viec",
-      icon: (
-        <GaugeIcon
-        />
-      ),
+      label: "Nhân sự",
+      items: [
+        {
+          title: "Bảng lương",
+          url: "/bang-luong",
+          icon: <BanknoteIcon />,
+        },
+      ],
     },
-    {
-      title: "Chi tiết cá nhân",
-      url: "/nhat-ky-ai",
-      icon: (
-        <CalendarClockIcon
-        />
-      ),
-    },
-    {
-      title: "Dự án",
-      url: "/du-an",
-      icon: (
-        <FolderIcon
-        />
-      ),
-    },
-    {
-      title: "Công việc",
-      url: "/dashboard/task",
-      icon: (
-        <ClipboardListIcon
-        />
-      ),
-    },
-    {
-      title: "Tài liệu chung",
-      url: "/documents",
-      icon: (
-        <FolderOpenIcon
-        />
-      ),
-    },
-    {
-      title: "Bảng lương",
-      url: "/bang-luong",
-      icon: (
-        <BanknoteIcon
-        />
-      ),
-    },
-  ],
+  ] satisfies NavSection[],
   navClouds: [
     {
       title: "Capture",
@@ -208,7 +199,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} />
+        <NavMain sections={data.navSections} />
         <NavDocuments items={data.documents} />
         <NavSecondary items={data.navSecondary} className="mt-auto" />
       </SidebarContent>
