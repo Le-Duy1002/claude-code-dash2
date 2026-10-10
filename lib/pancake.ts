@@ -716,6 +716,17 @@ export type PancakeMessage = {
   senderUid: string | null
   /** plain-text message body (tags stripped), best effort */
   text: string
+  /**
+   * Only a sticker (Facebook's 👍 "like" is one too) or a line of emoji —
+   * nothing to answer. A photo is NOT: it's usually something to look at.
+   */
+  reactionOnly: boolean
+}
+
+function isReactionOnly(text: string, attachments: Record<string, unknown>[]) {
+  if (/[\p{L}\p{N}]/u.test(text)) return false
+  if (attachments.length > 0) return attachments.every((a) => a.type === "sticker")
+  return /\p{Extended_Pictographic}/u.test(text)
 }
 
 /**
@@ -746,13 +757,18 @@ function mapMessage(
 ): PancakeMessage {
   const from = (raw.from ?? {}) as Record<string, unknown>
   const body = String(raw.original_message ?? raw.message ?? "")
+  const text = body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+  const attachments = Array.isArray(raw.attachments)
+    ? (raw.attachments as Record<string, unknown>[])
+    : []
   return {
     id: String(raw.id ?? ""),
     insertedAtMs: parsePancakeTime(raw.inserted_at),
     actor: classifyActor(from, pageId),
     senderName: String(from.admin_name ?? from.name ?? "—"),
     senderUid: (from.uid as string) ?? null,
-    text: body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+    text,
+    reactionOnly: isReactionOnly(text, attachments),
   }
 }
 

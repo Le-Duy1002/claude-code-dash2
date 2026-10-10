@@ -567,8 +567,14 @@ export function DailyLogView() {
                 tin khách nhắn trong khung <strong>0h–8h sáng</strong> (ngoài
                 giờ trực) <strong>vẫn tính vào Tổng hội thoại</strong>, nhưng{" "}
                 <strong>không tính</strong> vào Rep đúng hạn / Rep chậm / Bỏ
-                sót. Tin được Botcake trả lời trong 20 phút cũng không tính là
-                nhân viên bỏ sót.
+                sót. Tin được Botcake trả lời trong 20 phút, và sticker / emoji
+                khách gửi sau khi nhân viên đã nhắn, cũng không tính là nhân
+                viên bỏ sót.
+              </p>
+              <p>
+                Tag xét theo <strong>trạng thái hiện tại</strong> của hội thoại:
+                gắn tag muộn (vd. <em>Hẹn</em> vài ngày sau) thì lần đồng bộ sau
+                lỗi của hội thoại đó được gỡ.
               </p>
               <p>
                 <strong>Ca</strong> &amp; <strong>Số giờ làm</strong> = suy từ

@@ -218,9 +218,11 @@ function Scorecard({
           <strong>Rep đúng hạn / Bỏ sót</strong> chỉ xét hội thoại cần người
           xử lý: tính từ tin đầu khách nhắn <em>sau</em> loạt Botcake, trong giờ
           trực (bỏ khung 0h–8h). Bỏ qua hội thoại có tag Demo / Thông điệp / Hẹn
-          / Khách rác / Đã chốt, tin được Botcake trả lời trong 20′, và câu chốt
-          cuối kiểu “cảm ơn, liên hệ sau”. <strong>Bỏ sót</strong> = nhân viên đã
-          vào hội thoại nhưng bỏ ngỏ tin cuối của khách quá 20 phút.
+          / Khách rác / Đã chốt (theo tag hiện tại, gắn muộn vẫn được tính),
+          tin được Botcake trả lời trong 20′, câu chốt cuối kiểu “cảm ơn, liên
+          hệ sau”, và sticker / emoji khách gửi sau khi nhân viên đã nhắn.{" "}
+          <strong>Bỏ sót</strong> = nhân viên đã vào hội thoại nhưng bỏ ngỏ tin
+          cuối của khách quá 20 phút.
         </p>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">

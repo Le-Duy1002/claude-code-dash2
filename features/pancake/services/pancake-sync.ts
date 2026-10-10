@@ -376,6 +376,11 @@ async function syncShopInbox(
           (b) => b.insertedAtMs > atMs && b.insertedAtMs - atMs <= BOT_GRACE_MS
         )
 
+      // a sticker / emoji the customer sends once staff have written is a
+      // reaction, not something to answer (user, 10/10/2026)
+      const firstStaffMs =
+        messages.find((m) => m.actor === "staff")?.insertedAtMs ?? Infinity
+
       // customer messages that actually need a person: after the Botcake
       // first-touch, inside working hours (>= 8h VN)
       const customer = messages
@@ -384,7 +389,8 @@ async function syncShopInbox(
             m.actor === "customer" &&
             inDay(m.insertedAtMs) &&
             vnHour(m.insertedAtMs) >= 8 &&
-            !botHandled(m.insertedAtMs)
+            !botHandled(m.insertedAtMs) &&
+            !(m.reactionOnly && m.insertedAtMs > firstStaffMs)
         )
         .map((m) => ({ atMs: m.insertedAtMs, text: m.text }))
       return { conv, handlersToday, customer, replies }
@@ -949,8 +955,10 @@ async function fetchPageInputs(
  *       miss, not the next person's slow reply (29/09/2026).
  *   3 — graded conversations are kept (`convRecords`) and re-scored with
  *       their current tags on every sync (10/10/2026).
+ *   4 — a sticker / emoji the customer sends after a staff message needs
+ *       no reply (10/10/2026).
  */
-const RULES_VERSION = 3
+const RULES_VERSION = 4
 
 /**
  * A day's inbox tree with only its activity signals kept — the base every
