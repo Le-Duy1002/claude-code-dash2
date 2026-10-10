@@ -173,7 +173,7 @@ export function PayrollView() {
         <div>
           <h1 className="font-heading text-lg font-medium">Bảng lương</h1>
           <p className="text-sm text-muted-foreground">
-            Dựng từ Lịch làm việc và Thống kê công việc của kỳ. Nhập tay doanh
+            Dựng từ Lịch làm và Rà soát công việc của kỳ. Nhập tay doanh
             thu demo và số lần nộp báo cáo trễ; duyệt thưởng cố định. Bấm{" "}
             <strong>Chốt lương</strong> khi đã rà xong.
           </p>

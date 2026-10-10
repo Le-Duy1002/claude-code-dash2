@@ -17,7 +17,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { LayoutDashboardIcon, FolderIcon, FolderOpenIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, ClipboardListIcon, GaugeIcon, CalendarClockIcon, CalendarDaysIcon, BanknoteIcon, LineChartIcon } from "lucide-react"
+import { FolderIcon, FolderOpenIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, ClipboardListIcon, GaugeIcon, CalendarClockIcon, CalendarDaysIcon, BanknoteIcon, LineChartIcon } from "lucide-react"
 
 const data = {
   user: {
@@ -27,18 +27,42 @@ const data = {
   },
   navMain: [
     {
-      title: "Trang chủ",
-      url: "/",
+      title: "Chỉ số",
+      url: "/thong-ke-trang",
       icon: (
-        <LayoutDashboardIcon
+        <LineChartIcon
         />
       ),
     },
     {
-      title: "Lịch làm việc",
+      title: "Lịch làm",
       url: "/lich-lam-viec",
       icon: (
         <CalendarDaysIcon
+        />
+      ),
+    },
+    {
+      title: "Rà soát công việc",
+      url: "/theo-doi-cong-viec",
+      icon: (
+        <GaugeIcon
+        />
+      ),
+    },
+    {
+      title: "Chi tiết cá nhân",
+      url: "/nhat-ky-ai",
+      icon: (
+        <CalendarClockIcon
+        />
+      ),
+    },
+    {
+      title: "Dự án",
+      url: "/du-an",
+      icon: (
+        <FolderIcon
         />
       ),
     },
@@ -51,26 +75,10 @@ const data = {
       ),
     },
     {
-      title: "Thống kê công việc",
-      url: "/theo-doi-cong-viec",
+      title: "Tài liệu chung",
+      url: "/documents",
       icon: (
-        <GaugeIcon
-        />
-      ),
-    },
-    {
-      title: "Thống kê trang",
-      url: "/thong-ke-trang",
-      icon: (
-        <LineChartIcon
-        />
-      ),
-    },
-    {
-      title: "Chi tiết thang đo",
-      url: "/nhat-ky-ai",
-      icon: (
-        <CalendarClockIcon
+        <FolderOpenIcon
         />
       ),
     },
@@ -79,22 +87,6 @@ const data = {
       url: "/bang-luong",
       icon: (
         <BanknoteIcon
-        />
-      ),
-    },
-    {
-      title: "Tài liệu",
-      url: "/documents",
-      icon: (
-        <FolderOpenIcon
-        />
-      ),
-    },
-    {
-      title: "Dự án",
-      url: "/du-an",
-      icon: (
-        <FolderIcon
         />
       ),
     },

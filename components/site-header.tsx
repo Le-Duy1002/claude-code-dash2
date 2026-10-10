@@ -10,12 +10,12 @@ const TITLES: Record<string, string> = {
   "/dashboard": "Bảng điều khiển",
   "/dashboard/task": "Công việc",
   "/du-an": "Dự án",
-  "/lich-lam-viec": "Lịch làm việc",
-  "/theo-doi-cong-viec": "Thống kê công việc",
-  "/thong-ke-trang": "Thống kê trang",
-  "/nhat-ky-ai": "Chi tiết thang đo",
+  "/lich-lam-viec": "Lịch làm",
+  "/theo-doi-cong-viec": "Rà soát công việc",
+  "/thong-ke-trang": "Chỉ số",
+  "/nhat-ky-ai": "Chi tiết cá nhân",
   "/bang-luong": "Bảng lương",
-  "/documents": "Tài liệu",
+  "/documents": "Tài liệu chung",
 }
 
 function titleFromPathname(pathname: string) {

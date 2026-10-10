@@ -64,7 +64,7 @@ export default function DocumentsPage() {
     <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="font-heading text-lg font-medium">Tài liệu</h1>
+          <h1 className="font-heading text-lg font-medium">Tài liệu chung</h1>
           <p className="text-sm text-muted-foreground">
             Đồng bộ với thư mục Google Drive chung — đính kèm tệp ở đây hoặc thêm
             thẳng trên Drive, hai bên tự cập nhật cho nhau.

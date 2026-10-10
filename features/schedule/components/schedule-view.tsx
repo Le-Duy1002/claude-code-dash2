@@ -110,7 +110,7 @@ export function ScheduleView() {
     <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="font-heading text-lg font-medium">Lịch làm việc</h1>
+          <h1 className="font-heading text-lg font-medium">Lịch làm</h1>
           <p className="text-sm text-muted-foreground">
             Mỗi người tự chọn tên mình vào ca đăng ký. Quản lý bấm{" "}
             <strong>Chốt tuần</strong> khi lịch đã ổn — sau đó mọi chỉnh sửa
