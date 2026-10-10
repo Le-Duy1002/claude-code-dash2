@@ -429,7 +429,8 @@ export type BucketTree = Record<
  *
  * `orderData` is recomputed from scratch on every sync (orders are cheap and
  * their status changes). `inboxData` is ACCUMULATED — each sync only crawls
- * conversations not already in `processedConvIds` and merges them in — so
+ * conversations not already in `processedConvIds`, adds them to
+ * `convRecords`, and re-scores all of those with their current tags — so
  * re-syncing a busy day never drops what an earlier run captured.
  * Read code merges the two trees per cell.
  */
@@ -442,6 +443,12 @@ export type AgentDayDoc = {
   orderData: BucketTree
   inboxData: BucketTree
   processedConvIds: string[]
+  /**
+   * By page: the day's graded conversations as a JSON string (server-only
+   * sync state — see `ConvRecord` in `pancake-sync.ts`). Absent before
+   * rules version 3.
+   */
+  convRecords?: Record<string, string>
   warnings: string[]
   /** scoring-rules version the inbox grading was built with (absent = 1) */
   rulesVersion?: number

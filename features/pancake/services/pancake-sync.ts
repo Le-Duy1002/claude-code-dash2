@@ -36,6 +36,7 @@ import {
   shiftSpanAt,
   type GradedMessage,
   type OnDuty,
+  type ReplyOutcome,
   type StaffReply,
 } from "../reply-grading"
 import { seenStaffByFbId, staffByUid } from "../staff"
@@ -62,6 +63,8 @@ import {
 } from "../types"
 
 type TagSets = {
+  /** false when the page's tag catalogue couldn't be fetched */
+  loaded: boolean
   demo: Set<number>
   tiemNang: Set<number>
   daChot: Set<number>
@@ -100,6 +103,39 @@ async function mapLimit<T, R>(
 }
 
 type ShopTree = Record<string, Partial<Record<ShiftBucketKey, AgentDayBucket>>>
+
+/**
+ * One graded conversation of a day. Grading a conversation's messages is
+ * settled once its outcome is final, but staff often tag it later — e.g.
+ * "Hẹn" days after the customer went quiet — so everything that depends on
+ * tags is NOT frozen at grading time: the day keeps these records and
+ * re-scores them on every sync with the conversation's current tags
+ * (user, 10/10/2026).
+ */
+type ConvRecord = {
+  label: string
+  customerId?: string
+  pageId: string
+  /** refreshed from the conversation list on every sync */
+  tagIds: number[]
+  /** tracked staff.key -> earliest message time that day */
+  handlers: Record<string, number>
+  outcomes: Pick<ReplyOutcome, "staffKey" | "kind" | "atMs" | "detail">[]
+}
+
+/** conversation id -> record, for one page */
+type ConvRecords = Map<string, ConvRecord>
+
+// Stored as one JSON string per page: as a Firestore map, every field of
+// every record would get its own index entries (40k max per document).
+function encodeRecords(records: ConvRecords): string {
+  return JSON.stringify(Object.fromEntries(records))
+}
+
+function decodeRecords(json: string | undefined): ConvRecords {
+  if (!json) return new Map()
+  return new Map(Object.entries(JSON.parse(json) as Record<string, ConvRecord>))
+}
 
 function cellOf(tree: ShopTree, staffKey: string, sb: ShiftBucketKey) {
   const byStaff = (tree[staffKey] ??= {})
@@ -228,8 +264,11 @@ async function syncShopInbox(
   shop: Pick<PancakePage, "name" | "fbPageId">,
   fromMs: number,
   toMs: number,
+  /** activity captured by earlier runs — the scoring is rebuilt from `records` */
   seedTree: ShopTree,
   processed: Set<string>,
+  /** this page's graded conversations so far; newly graded ones are added */
+  records: ConvRecords,
   tagId: TagSets,
   closedOrderConvIds: Set<string>,
   conversations: PancakeConversation[],
@@ -416,19 +455,40 @@ async function syncShopInbox(
     const engaged = item.replies.some((r) => r.atMs >= fromMs)
     const outcomes = engaged ? grading.outcomes : []
     if (item.handlersToday.size === 0 && outcomes.length === 0) continue
-
-    const hasDemo = has(conv.tagIds, tagId.demo)
-    const hasTiemNang = has(conv.tagIds, tagId.tiemNang)
-    const hasDaChot = has(conv.tagIds, tagId.daChot)
-    const closedHere = closedOrderConvIds.has(conv.id)
-    // khách nói vu vơ / hẹn / cảm ơn / broadcast — không cần rep đúng hạn
-    const noReplyNeeded = has(conv.tagIds, tagId.noReplyNeeded)
-
-    const evBase = {
+    records.set(conv.id, {
       label: conv.customerName,
       customerId: conv.customerUuid ?? undefined,
       pageId: conv.pageId,
-      conversationId: conv.id,
+      tagIds: conv.tagIds,
+      handlers: Object.fromEntries(item.handlersToday),
+      outcomes: outcomes.map(({ staffKey, kind, atMs, detail }) => ({
+        staffKey,
+        kind,
+        atMs,
+        detail,
+      })),
+    })
+  }
+
+  // Score every graded conversation of the day — earlier runs' included —
+  // with its CURRENT tags (see `ConvRecord`).
+  for (const conv of conversations) {
+    const record = records.get(conv.id)
+    if (record) record.tagIds = conv.tagIds
+  }
+  for (const [conversationId, record] of records) {
+    const hasDemo = has(record.tagIds, tagId.demo)
+    const hasTiemNang = has(record.tagIds, tagId.tiemNang)
+    const hasDaChot = has(record.tagIds, tagId.daChot)
+    const closedHere = closedOrderConvIds.has(conversationId)
+    // khách nói vu vơ / hẹn / cảm ơn / broadcast — không cần rep đúng hạn
+    const noReplyNeeded = has(record.tagIds, tagId.noReplyNeeded)
+
+    const evBase = {
+      label: record.label,
+      customerId: record.customerId,
+      pageId: record.pageId,
+      conversationId,
     }
 
     // criterion 6 — the "Đã chốt" tag rule (user, 05/09):
@@ -446,7 +506,7 @@ async function syncShopInbox(
     // per staff who replied today: "Tổng hội thoại" counts every conversation
     // (1 khách = 1 hội thoại); the response outcome below is what skips the
     // "no reply needed" tags.
-    for (const [key, firstMs] of item.handlersToday) {
+    for (const [key, firstMs] of Object.entries(record.handlers)) {
       const b = bucket(key, shiftBucketOf(firstMs))
       b.convHandled += 1
       if (hasDemo) b.demoConversations += 1
@@ -471,7 +531,7 @@ async function syncShopInbox(
     // (see `gradeConversation`: a message left past the end of a shift is
     // that shift's miss, not the next person's slow reply).
     if (noReplyNeeded || hasDaChot) continue
-    for (const o of outcomes) {
+    for (const o of record.outcomes) {
       const b = bucket(o.staffKey, shiftBucketOf(o.atMs))
       b.replied += 1
       const event = { ...evBase, atMs: o.atMs, detail: o.detail }
@@ -718,6 +778,7 @@ async function fetchPageInputs(
 ): Promise<PageInputs> {
   const warnings: string[] = []
   const tagId: TagSets = {
+    loaded: false,
     demo: new Set<number>(),
     tiemNang: new Set<number>(),
     daChot: new Set<number>(),
@@ -776,6 +837,7 @@ async function fetchPageInputs(
           if (text === tagText) demoTagId.closedByStaff[staffKey].add(tag.id)
         }
       }
+      tagId.loaded = true
     } catch (error) {
       warnings.push(`${page.name}: tag — ${(error as Error).message}`)
     }
@@ -885,13 +947,16 @@ async function fetchPageInputs(
  * version is re-graded (every conversation crawled again) on its next sync.
  *   2 — a message left unanswered past the end of a shift is that shift's
  *       miss, not the next person's slow reply (29/09/2026).
+ *   3 — graded conversations are kept (`convRecords`) and re-scored with
+ *       their current tags on every sync (10/10/2026).
  */
-const RULES_VERSION = 2
+const RULES_VERSION = 3
 
 /**
- * A day's inbox tree with only its activity signals kept — the base for a
- * re-grade. The rest is rebuilt from the conversations; the "seen" markers
- * behind the activity can't be (Pancake only keeps recent ones).
+ * A day's inbox tree with only its activity signals kept — the base every
+ * sync builds on. The scoring is rebuilt from the graded conversations
+ * (`ConvRecord`); the "seen" markers behind the activity can't be (Pancake
+ * only keeps recent ones).
  */
 function activityOnly(tree: ShopTree): ShopTree {
   const out: ShopTree = {}
@@ -942,9 +1007,11 @@ async function buildDay(
   const processed = new Set<string>(
     regrade ? [] : (existing?.processedConvIds ?? [])
   )
+  const existingRecords = regrade ? {} : (existing?.convRecords ?? {})
 
   const orderData: BucketTree = {}
   const inboxData: BucketTree = {}
+  const convRecords: Record<string, string> = {}
   const pageHourly: Record<string, PageHourlyStats> = {}
   const demoFunnel: Record<string, DemoFunnelStats> = {}
   let convsCrawled = 0
@@ -976,12 +1043,24 @@ async function buildDay(
     )
 
     const seed = (existing?.inboxData?.[fbPageId] as ShopTree) ?? {}
+    if (hasInboxToken() && fbPageId && !input.tagId.loaded) {
+      // Without the tag catalogue every conversation would be scored as
+      // untagged — keep what the last good sync built for this page.
+      inboxData[fbPageId] = seed
+      if (existingRecords[fbPageId] != null) {
+        convRecords[fbPageId] = existingRecords[fbPageId]
+      }
+      partial = true
+      continue
+    }
+    const records = decodeRecords(existingRecords[fbPageId])
     const inbox = await syncShopInbox(
       input.page,
       fromMs,
       toMs,
-      regrade ? activityOnly(seed) : seed,
+      activityOnly(seed),
       processed,
+      records,
       input.tagId,
       closedOrderConvIds,
       input.conversations,
@@ -990,6 +1069,7 @@ async function buildDay(
       onDuty
     )
     inboxData[fbPageId] = inbox.tree
+    convRecords[fbPageId] = encodeRecords(records)
     convsCrawled += inbox.crawled
     partial = partial || inbox.partial
   }
@@ -1007,6 +1087,7 @@ async function buildDay(
     pancakeStats: existingDoc?.pancakeStats ?? {},
     pancakeDemoStats: existingDoc?.pancakeDemoStats ?? {},
     processedConvIds: [...processed].slice(-4000),
+    convRecords,
     warnings: [...new Set([...warnings, ...inputs.flatMap((i) => i.warnings)])],
     rulesVersion: RULES_VERSION,
   }
