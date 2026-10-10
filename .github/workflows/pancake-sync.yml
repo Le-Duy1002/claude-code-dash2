@@ -2,7 +2,8 @@ name: Sync Pancake work-tracking
 
 # Crawls Pancake and refreshes the per-staff daily aggregates
 # (`pancakeAgentDaily/*`) that the "Theo dõi công việc" page reads.
-# Runs every 30 minutes: re-syncs today (and yesterday, to catch late edits).
+# Runs every 30 minutes: re-syncs the last 7 days, so tags staff add late
+# (e.g. "Hẹn" a few days on) are re-applied to the scoring.
 #
 # Required repo secrets:
 #   PANCAKE_SYNC_URL     e.g. https://<your-app>.vercel.app/api/pancake/sync
@@ -15,7 +16,7 @@ on:
     inputs:
       days:
         description: "How many days back to re-sync"
-        default: "2"
+        default: "7"
 
 jobs:
   sync:
@@ -24,7 +25,7 @@ jobs:
       - name: Trigger Pancake sync
         run: |
           curl --silent --show-error --fail-with-body --max-time 1200 \
-            -X POST "$PANCAKE_SYNC_URL?days=${DAYS:-2}" \
+            -X POST "$PANCAKE_SYNC_URL?days=${DAYS:-7}" \
             -H "Authorization: Bearer $PANCAKE_SYNC_SECRET"
         env:
           PANCAKE_SYNC_URL: ${{ secrets.PANCAKE_SYNC_URL }}
