@@ -11,8 +11,9 @@
  *    history and old customers get re-touched constantly, so the sync first
  *    records every conversation that ALREADY has "Chốt sale" (the baseline,
  *    one walk of the whole page), and from then on dates each newly tagged
- *    one when it first sees it. Days before `closedTrackedFrom` have no
- *    khách chốt figures (shown as "—").
+ *    one when it first sees it. Before `closedTrackedFrom` only Tổng has a
+ *    khách chốt figure — Pancake's own daily "Chốt sale" count (Pancake
+ *    can't attribute it, so the staff split / giá / AOV show "—").
  *  - Giá bản luận and the payments are entered by hand per closed customer;
  *    each payment carries its own date and "Đã trả" sums payments by it.
  *  - AOV = tổng giá bản luận / số khách chốt; tỉ lệ chốt = khách chốt / khách xem.
@@ -51,24 +52,49 @@ export function staffKeyFromTags(tags: string[]): string | null {
 
 // ------------------------------------------------------------ records
 
+/**
+ * What a received payment is, for Thống kê doanh thu: paid as part of the
+ * close ("chot"), or paying off an earlier month's debt ("no"). Revenue is
+ * always counted on the day the money came in (`date`); a debt payment also
+ * says which month the debt is from (`debtMonth`).
+ */
+export type CskhPaymentKind = "chot" | "no"
+
+export const PAYMENT_KIND_LABELS: Record<CskhPaymentKind, string> = {
+  chot: "Khách chốt trả",
+  no: "Trả nợ",
+}
+
 export type CskhPayment = {
   id: string
   amount: number
-  /** `YYYY-MM-DD`, the day the customer paid */
+  /** `YYYY-MM-DD`, the day the money was received */
   date: string
+  kind: CskhPaymentKind
+  /** `YYYY-MM` the debt is from — only for `kind === "no"` */
+  debtMonth: string | null
 }
 
-/** One closed customer — `cskhCustomers/{conversationId}`. */
+/**
+ * One customer — `cskhCustomers/{id}`. Normally a conversation the sync saw
+ * get "Chốt sale" (id = Pancake conversation id). A `legacy` one was added by
+ * hand to record debt payments from a customer closed before tracking started
+ * (id = the conversation id when a link was given, else generated); it never
+ * counts as khách chốt.
+ */
 export type CskhCustomer = {
-  /** Pancake conversation id */
   id: string
   pageId: string
   customerName: string
   staffKey: string | null
   /** staff was picked by hand — the sync no longer follows the name tag */
   staffManual: boolean
-  /** `YYYY-MM-DD` the customer counts as closed on */
+  /** `YYYY-MM-DD` the customer counts as closed on; "" for `legacy` */
   closedDate: string
+  /** added by hand for an old customer's debt (see type doc) */
+  legacy: boolean
+  /** `YYYY-MM` an old customer's debt is from — `legacy` only */
+  debtMonth: string | null
   /** giá bản luận, null until entered */
   price: number | null
   payments: CskhPayment[]
@@ -99,6 +125,8 @@ export type CskhReport = {
   customers: CskhCustomer[]
   /** first day khách chốt is tracked (`YYYY-MM-DD`), null until the baseline is done */
   closedTrackedFrom: string | null
+  /** date -> Pancake's own net "Chốt sale" count — Tổng khách chốt before tracking */
+  pancakeClosed: Record<string, number>
   lastSyncedAtMs: number | null
   warnings: string[]
 }
@@ -115,7 +143,47 @@ export type CskhSyncResult = {
   truncated: boolean
 }
 
+/** Input for "Thêm khách trả nợ" — an old customer paying off a debt. */
+export type CskhDebtorInput = {
+  customerName: string
+  /** Pancake conversation link or id, optional */
+  conversation?: string | null
+  staffKey: string | null
+  /** `YYYY-MM` the debt is from */
+  debtMonth: string
+  price?: number | null
+  /** the first debt payment */
+  amount: number
+  date: string
+}
+
 export const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+export const ISO_MONTH = /^\d{4}-\d{2}$/
+
+/** A conversation id from a Pancake link (`…?c_id=<id>`) or a bare id. */
+export function parseConversationRef(text: string | null | undefined): string | null {
+  const value = (text ?? "").trim()
+  if (!value) return null
+  const fromLink = /[?&]c_id=([^&#\s]+)/.exec(value)
+  const id = fromLink ? decodeURIComponent(fromLink[1]) : value
+  return /^\d+_\d+$/.test(id) ? id : null
+}
+
+/** Default kind for a payment received on `date` from `customer`. */
+export function suggestPaymentKind(
+  customer: Pick<CskhCustomer, "legacy" | "closedDate">,
+  date: string
+): CskhPaymentKind {
+  return !customer.legacy && date === customer.closedDate ? "chot" : "no"
+}
+
+/** Default debt month for a customer's debt payment. */
+export function defaultDebtMonth(
+  customer: Pick<CskhCustomer, "legacy" | "closedDate" | "debtMonth">
+): string | null {
+  if (customer.legacy) return customer.debtMonth
+  return customer.closedDate ? customer.closedDate.slice(0, 7) : null
+}
 
 function tsToMs(value: unknown): number {
   if (typeof value === "number") return value
@@ -133,6 +201,14 @@ export function mapCskhCustomer(
   id: string,
   data: Record<string, unknown>
 ): CskhCustomer {
+  const base = {
+    legacy: Boolean(data.legacy),
+    closedDate: String(data.closedDate ?? ""),
+    debtMonth:
+      typeof data.debtMonth === "string" && ISO_MONTH.test(data.debtMonth)
+        ? data.debtMonth
+        : null,
+  }
   const payments = Array.isArray(data.payments)
     ? (data.payments as Partial<CskhPayment>[])
         .filter(
@@ -143,7 +219,24 @@ export function mapCskhCustomer(
             typeof p.date === "string" &&
             ISO_DATE.test(p.date)
         )
-        .map((p) => ({ id: p.id!, amount: Number(p.amount), date: p.date! }))
+        .map((p) => {
+          const kind: CskhPaymentKind =
+            p.kind === "chot" || p.kind === "no"
+              ? p.kind
+              : suggestPaymentKind(base, p.date!)
+          return {
+            id: p.id!,
+            amount: Number(p.amount),
+            date: p.date!,
+            kind,
+            debtMonth:
+              kind === "no"
+                ? typeof p.debtMonth === "string" && ISO_MONTH.test(p.debtMonth)
+                  ? p.debtMonth
+                  : defaultDebtMonth(base)
+                : null,
+          }
+        })
     : []
   return {
     id,
@@ -151,7 +244,7 @@ export function mapCskhCustomer(
     customerName: String(data.customerName ?? "Khách"),
     staffKey: (data.staffKey as string) ?? null,
     staffManual: Boolean(data.staffManual),
-    closedDate: String(data.closedDate ?? ""),
+    ...base,
     price:
       data.price == null || !Number.isFinite(Number(data.price))
         ? null
@@ -174,7 +267,10 @@ export function outstanding(customer: CskhCustomer): number | null {
   return Math.max(0, customer.price - paidTotal(customer))
 }
 
-/** Should this record show for `[fromDate, toDate]`? */
+/**
+ * Should this record show for `[fromDate, toDate]`? Closed in it, paid in it,
+ * or still owing — and an old customer with no price yet stays until paid.
+ */
 export function isRelevant(
   customer: CskhCustomer,
   fromDate: string,
@@ -183,6 +279,9 @@ export function isRelevant(
   const inRange = (d: string) => d >= fromDate && d <= toDate
   if (inRange(customer.closedDate)) return true
   if (customer.payments.some((p) => inRange(p.date))) return true
+  if (customer.legacy && customer.price == null) {
+    return customer.payments.length === 0
+  }
   return (outstanding(customer) ?? 0) > 0
 }
 
@@ -190,12 +289,22 @@ export function isRelevant(
 
 export type CskhMetrics = {
   viewed: number
+  /** khách xem on the days whose khách chốt is known — what tỉ lệ chốt divides by */
+  viewedForRate: number
+  /**
+   * khách chốt: from tracked records — or, for Tổng on a day before
+   * tracking, Pancake's own daily "Chốt sale" count
+   */
   closed: number
+  /** khách chốt from tracked records only — what AOV divides by */
+  closedTracked: number
   /** tổng giá bản luận */
   price: number
   /** đã trả */
   paid: number
-  /** some day summed here is on/after `closedTrackedFrom` — else closed/price are unknown */
+  /** some summed day has a khách chốt figure for this group */
+  closedKnown: boolean
+  /** some summed day is on/after `closedTrackedFrom` — giá bản luận / AOV exist */
   tracked: boolean
 }
 
@@ -208,46 +317,71 @@ export const CSKH_GROUPS: { key: string; name: string }[] = [
 ]
 
 export function emptyMetrics(): CskhMetrics {
-  return { viewed: 0, closed: 0, price: 0, paid: 0, tracked: false }
+  return {
+    viewed: 0,
+    viewedForRate: 0,
+    closed: 0,
+    closedTracked: 0,
+    price: 0,
+    paid: 0,
+    closedKnown: false,
+    tracked: false,
+  }
 }
 
 export function aov(m: CskhMetrics): number | null {
-  return m.tracked && m.closed > 0 ? m.price / m.closed : null
+  return m.tracked && m.closedTracked > 0 ? m.price / m.closedTracked : null
 }
 
-/** Percent, or null with no khách xem / before tracking. */
+/** Percent, or null with no khách xem / no khách chốt figure. */
 export function closeRate(m: CskhMetrics): number | null {
-  return m.tracked && m.viewed > 0 ? (m.closed / m.viewed) * 100 : null
+  return m.closedKnown && m.viewedForRate > 0
+    ? (m.closed / m.viewedForRate) * 100
+    : null
 }
 
 /** date -> group -> metrics */
 export type CskhDaily = Map<string, Record<string, CskhMetrics>>
 
-/** Per-day metrics for every group over `report.dates`. */
+/**
+ * Per-day metrics for every group over `report.dates`. On a day before
+ * tracking only Tổng has a khách chốt figure (Pancake's "Chốt sale" count);
+ * the staff split, giá bản luận and AOV start with tracking.
+ */
 export function dailyMetrics(report: CskhReport): CskhDaily {
   const out: CskhDaily = new Map()
   const from = report.closedTrackedFrom
   for (const date of report.dates) {
+    const tracked = from != null && date >= from
     const row: Record<string, CskhMetrics> = {}
     for (const g of CSKH_GROUPS) {
-      row[g.key] = { ...emptyMetrics(), tracked: from != null && date >= from }
+      row[g.key] = { ...emptyMetrics(), tracked, closedKnown: tracked }
     }
     for (const s of CSKH_STAFF) {
       const v = report.views[date]?.[s.key] ?? 0
       row[s.key].viewed += v
       row[CSKH_TOTAL].viewed += v
     }
+    const pancakeClosed = report.pancakeClosed[date]
+    if (!tracked && pancakeClosed != null) {
+      row[CSKH_TOTAL].closed = pancakeClosed
+      row[CSKH_TOTAL].closedKnown = true
+    }
+    for (const g of CSKH_GROUPS) {
+      if (row[g.key].closedKnown) row[g.key].viewedForRate = row[g.key].viewed
+    }
     out.set(date, row)
   }
-  // a customer with no staff (no name tag, none picked) counts nowhere — the
-  // total is exactly the sum of the staff columns
+  // a customer with no staff (no name tag, none picked) counts nowhere — from
+  // tracking on, the total is exactly the sum of the staff columns
   const groupsOf = (c: CskhCustomer) =>
     c.staffKey && STAFF_NAME.has(c.staffKey) ? [CSKH_TOTAL, c.staffKey] : []
   for (const c of report.customers) {
     const closedRow = out.get(c.closedDate)
-    if (closedRow && !c.tagRemoved) {
+    if (closedRow && !c.tagRemoved && closedRow[CSKH_TOTAL].tracked) {
       for (const g of groupsOf(c)) {
         closedRow[g].closed += 1
+        closedRow[g].closedTracked += 1
         closedRow[g].price += c.price ?? 0
       }
     }
@@ -271,11 +405,16 @@ export function sumMetrics(
     const row = daily.get(date)
     if (!row) continue
     for (const g of CSKH_GROUPS) {
-      out[g.key].viewed += row[g.key].viewed
-      out[g.key].closed += row[g.key].closed
-      out[g.key].price += row[g.key].price
-      out[g.key].paid += row[g.key].paid
-      out[g.key].tracked ||= row[g.key].tracked
+      const m = out[g.key]
+      const r = row[g.key]
+      m.viewed += r.viewed
+      m.viewedForRate += r.viewedForRate
+      m.closed += r.closed
+      m.closedTracked += r.closedTracked
+      m.price += r.price
+      m.paid += r.paid
+      m.closedKnown ||= r.closedKnown
+      m.tracked ||= r.tracked
     }
   }
   return out
@@ -300,6 +439,90 @@ export function paymentsIn(
     }
   }
   return out.sort((a, b) => b.date.localeCompare(a.date))
+}
+
+// ------------------------------------------------------------ revenue
+
+/** One received payment and whose it is — a line of Thống kê doanh thu. */
+export type CskhReceipt = CskhPayment & {
+  customerId: string
+  customerName: string
+  staffKey: string | null
+}
+
+/**
+ * Every payment received on one of `dates`, all staff (a customer with no
+ * staff still brought the money in), newest first.
+ */
+export function receiptsIn(
+  customers: CskhCustomer[],
+  dates: string[]
+): CskhReceipt[] {
+  const set = new Set(dates)
+  const out: CskhReceipt[] = []
+  for (const c of customers) {
+    for (const p of c.payments) {
+      if (!set.has(p.date)) continue
+      out.push({
+        ...p,
+        customerId: c.id,
+        customerName: c.customerName,
+        staffKey: c.staffKey,
+      })
+    }
+  }
+  return out.sort((a, b) => b.date.localeCompare(a.date))
+}
+
+/** Money received, by kind. */
+export type CskhRevenue = { chot: number; no: number }
+
+/** date -> money received that day, over `dates`. */
+export function dailyRevenue(
+  customers: CskhCustomer[],
+  dates: string[]
+): Map<string, CskhRevenue> {
+  const out = new Map<string, CskhRevenue>()
+  for (const date of dates) out.set(date, { chot: 0, no: 0 })
+  for (const c of customers) {
+    for (const p of c.payments) {
+      const row = out.get(p.date)
+      if (row) row[p.kind] += p.amount
+    }
+  }
+  return out
+}
+
+export function sumRevenue(
+  daily: Map<string, CskhRevenue>,
+  dates: string[]
+): CskhRevenue {
+  const out: CskhRevenue = { chot: 0, no: 0 }
+  for (const date of dates) {
+    const row = daily.get(date)
+    if (!row) continue
+    out.chot += row.chot
+    out.no += row.no
+  }
+  return out
+}
+
+/** Debt payments grouped by the month the debt is from, oldest month first. */
+export function debtByMonth(
+  receipts: CskhReceipt[]
+): { month: string | null; amount: number; count: number }[] {
+  const map = new Map<string, { amount: number; count: number }>()
+  for (const r of receipts) {
+    if (r.kind !== "no") continue
+    const key = r.debtMonth ?? ""
+    const row = map.get(key) ?? { amount: 0, count: 0 }
+    row.amount += r.amount
+    row.count += 1
+    map.set(key, row)
+  }
+  return [...map]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, row]) => ({ month: month || null, ...row }))
 }
 
 // ------------------------------------------------------------ time tree
@@ -329,6 +552,12 @@ function weekdayMon0(iso: string): number {
 /** `"2026-10-05"` → `"05/10"`. */
 export function formatDm(iso: string): string {
   return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
+}
+
+/** `"2026-09"` → `"T9/2026"`; null → "—". */
+export function formatMonth(month: string | null): string {
+  if (!month) return "—"
+  return `T${Number(month.slice(5, 7))}/${month.slice(0, 4)}`
 }
 
 /** `"2026-10-05"` → `"05/10/2026"`. */

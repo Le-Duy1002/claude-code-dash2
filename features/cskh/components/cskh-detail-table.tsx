@@ -2,21 +2,19 @@
 
 import * as React from "react"
 import { Popover } from "@base-ui/react/popover"
-import { ChevronRightIcon } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 import {
   CSKH_GROUPS,
   CSKH_TOTAL,
   aov,
-  buildPeriodTree,
   closeRate,
   cskhStaffName,
   dailyMetrics,
   formatDm,
   formatMoney,
+  formatMonth,
   formatPct,
   paymentsIn,
   sumMetrics,
@@ -24,6 +22,12 @@ import {
   type CskhPeriod,
   type CskhReport,
 } from "../types"
+import {
+  PeriodExpandButtons,
+  PeriodLabelCell,
+  periodRowClass,
+  usePeriodTree,
+} from "./period-tree"
 
 const METRIC_COLS: { key: string; label: string }[] = [
   { key: "viewed", label: "Khách xem" },
@@ -33,17 +37,6 @@ const METRIC_COLS: { key: string; label: string }[] = [
   { key: "aov", label: "AOV" },
   { key: "rate", label: "Tỉ lệ chốt" },
 ]
-
-function flatten(
-  nodes: CskhPeriod[],
-  expanded: Set<string>,
-  depth = 0
-): { node: CskhPeriod; depth: number }[] {
-  return nodes.flatMap((node) => [
-    { node, depth },
-    ...(expanded.has(node.id) ? flatten(node.children, expanded, depth + 1) : []),
-  ])
-}
 
 function PaidCell({
   report,
@@ -73,7 +66,7 @@ function PaidCell({
             <div className="flex max-h-72 flex-col gap-1 overflow-y-auto text-sm">
               {payments.map((p) => (
                 <div
-                  key={`${p.id}`}
+                  key={p.id}
                   className="flex items-center justify-between gap-2"
                 >
                   <span className="min-w-0 truncate">
@@ -81,12 +74,12 @@ function PaidCell({
                       {formatDm(p.date)}
                     </span>{" "}
                     {p.customerName}
-                    {group === CSKH_TOTAL ? (
-                      <span className="text-muted-foreground">
-                        {" "}
-                        · {cskhStaffName(p.staffKey)}
-                      </span>
-                    ) : null}
+                    <span className="text-muted-foreground">
+                      {group === CSKH_TOTAL
+                        ? ` · ${cskhStaffName(p.staffKey)}`
+                        : ""}
+                      {p.kind === "no" ? ` · trả nợ ${formatMonth(p.debtMonth)}` : ""}
+                    </span>
                   </span>
                   <span className="shrink-0 tabular-nums">
                     {formatMoney(p.amount)}
@@ -120,7 +113,7 @@ function MetricCells({
         const m = sums[g.key]
         const cells: React.ReactNode[] = [
           m.viewed,
-          m.tracked ? m.closed : "—",
+          m.closedKnown ? m.closed : "—",
           m.tracked ? formatMoney(m.price) : "—",
           <PaidCell
             key="paid"
@@ -155,28 +148,9 @@ function MetricCells({
  * total and for each staff side by side.
  */
 export function CskhDetailTable({ report }: { report: CskhReport }) {
-  const tree = React.useMemo(() => buildPeriodTree(report.dates), [report.dates])
   const daily = React.useMemo(() => dailyMetrics(report), [report])
-
-  const [expanded, setExpanded] = React.useState<Set<string>>(
-    () => new Set(tree.map((m) => m.id))
-  )
-  React.useEffect(() => {
-    setExpanded(new Set(tree.map((m) => m.id)))
-  }, [tree])
-
-  const allIds = React.useMemo(
-    () => tree.flatMap((m) => [m.id, ...m.children.map((w) => w.id)]),
-    [tree]
-  )
-  const rows = flatten(tree, expanded)
-  const toggle = (id: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+  const { tree, rows, expanded, toggle, expandAll, collapseAll } =
+    usePeriodTree(report.dates)
 
   const grand: CskhPeriod = {
     id: "all",
@@ -188,22 +162,10 @@ export function CskhDetailTable({ report }: { report: CskhReport }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => setExpanded(new Set(allIds))}
-        >
-          Mở hết từng ngày
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => setExpanded(new Set())}
-        >
-          Thu gọn theo tháng
-        </Button>
-      </div>
+      <PeriodExpandButtons
+        onExpandAll={expandAll}
+        onCollapseAll={collapseAll}
+      />
 
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full border-collapse text-xs">
@@ -245,48 +207,21 @@ export function CskhDetailTable({ report }: { report: CskhReport }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ node, depth }) => {
-              const sums = sumMetrics(daily, node.dates)
-              const canExpand = node.children.length > 0
-              return (
-                <tr
-                  key={node.id}
-                  className={cn(
-                    "border-b last:border-b-0 hover:bg-muted/40",
-                    node.level === "month" && "bg-muted/20 font-semibold",
-                    node.level === "week" && "font-medium"
-                  )}
-                >
-                  <td
-                    className={cn(
-                      "sticky left-0 z-10 px-2 py-1.5 whitespace-nowrap",
-                      node.level === "month" ? "bg-muted" : "bg-card"
-                    )}
-                  >
-                    <button
-                      type="button"
-                      disabled={!canExpand}
-                      onClick={() => toggle(node.id)}
-                      className="flex items-center gap-1 text-left disabled:cursor-default"
-                      style={{ paddingLeft: depth * 16 }}
-                    >
-                      {canExpand ? (
-                        <ChevronRightIcon
-                          className={cn(
-                            "size-3.5 shrink-0 text-muted-foreground transition-transform",
-                            expanded.has(node.id) && "rotate-90"
-                          )}
-                        />
-                      ) : (
-                        <span className="w-3.5 shrink-0" />
-                      )}
-                      {node.label}
-                    </button>
-                  </td>
-                  <MetricCells report={report} period={node} sums={sums} />
-                </tr>
-              )
-            })}
+            {rows.map(({ node, depth }) => (
+              <tr key={node.id} className={periodRowClass(node)}>
+                <PeriodLabelCell
+                  node={node}
+                  depth={depth}
+                  expanded={expanded.has(node.id)}
+                  onToggle={() => toggle(node.id)}
+                />
+                <MetricCells
+                  report={report}
+                  period={node}
+                  sums={sumMetrics(daily, node.dates)}
+                />
+              </tr>
+            ))}
           </tbody>
           {tree.length > 1 ? (
             <tfoot>

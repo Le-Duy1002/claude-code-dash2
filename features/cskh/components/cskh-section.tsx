@@ -8,7 +8,11 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { RangeValue } from "@/features/pancake/components/date-range-picker"
 
-import { fetchCskhReport } from "../services/cskh-service"
+import {
+  cskhAutoSyncDue,
+  fetchCskhReport,
+  syncCskh,
+} from "../services/cskh-service"
 import {
   CSKH_PAGE_NAME,
   formatDateTime,
@@ -17,6 +21,7 @@ import {
 } from "../types"
 import { CskhCustomerList } from "./cskh-customer-list"
 import { CskhDetailTable } from "./cskh-detail-table"
+import { CskhRevenueSheet } from "./cskh-revenue"
 
 type Sheet = "detail" | "revenue"
 
@@ -38,6 +43,18 @@ export function CskhSection({
   const [report, setReport] = React.useState<CskhReport | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
+  const [autoSyncKey, setAutoSyncKey] = React.useState(0)
+
+  // pick up new "Chốt sale" tags on open (last 3 days), then re-read
+  const autoSyncTried = React.useRef(false)
+  React.useEffect(() => {
+    if (!user || autoSyncTried.current) return
+    autoSyncTried.current = true
+    if (!cskhAutoSyncDue()) return
+    syncCskh(3)
+      .then(() => setAutoSyncKey((k) => k + 1))
+      .catch(() => {})
+  }, [user])
 
   React.useEffect(() => {
     if (!user) return
@@ -54,17 +71,27 @@ export function CskhSection({
       })
       .finally(() => setLoading(false))
     return () => ctrl.abort()
-  }, [user, dateRange.range, dateRange.from, dateRange.to, refreshKey])
+  }, [
+    user,
+    dateRange.range,
+    dateRange.from,
+    dateRange.to,
+    refreshKey,
+    autoSyncKey,
+  ])
 
-  const replaceCustomer = React.useCallback((next: CskhCustomer) => {
-    setReport((prev) =>
-      prev
-        ? {
-            ...prev,
-            customers: prev.customers.map((c) => (c.id === next.id ? next : c)),
-          }
-        : prev
-    )
+  /** a record was saved (replace it) or added ("Thêm khách trả nợ") */
+  const upsertCustomer = React.useCallback((next: CskhCustomer) => {
+    setReport((prev) => {
+      if (!prev) return prev
+      const exists = prev.customers.some((c) => c.id === next.id)
+      return {
+        ...prev,
+        customers: exists
+          ? prev.customers.map((c) => (c.id === next.id ? next : c))
+          : [next, ...prev.customers],
+      }
+    })
   }, [])
 
   return (
@@ -112,12 +139,10 @@ export function CskhSection({
         </div>
       ))}
 
-      {sheet === "revenue" ? (
-        <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          Thống kê doanh thu — nội dung sẽ được bổ sung.
-        </p>
-      ) : loading && !report ? (
+      {loading && !report ? (
         <Skeleton className="h-72 w-full" />
+      ) : report && sheet === "revenue" ? (
+        <CskhRevenueSheet report={report} />
       ) : report ? (
         <>
           <CskhDetailTable report={report} />
@@ -131,7 +156,7 @@ export function CskhSection({
           </p>
           <CskhCustomerList
             customers={report.customers}
-            onChange={replaceCustomer}
+            onChange={upsertCustomer}
           />
         </>
       ) : null}

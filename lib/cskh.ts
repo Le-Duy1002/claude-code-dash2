@@ -9,13 +9,16 @@ import {
   CSKH_PAGE_ID,
   CSKH_STAFF,
   ISO_DATE,
+  ISO_MONTH,
   isRelevant,
   mapCskhCustomer,
   normTag,
+  parseConversationRef,
   staffKeyFromTags,
   vnDateOf,
   type CskhCustomer,
   type CskhCustomerPatch,
+  type CskhDebtorInput,
   type CskhPayment,
   type CskhSyncResult,
 } from "@/features/cskh/types"
@@ -249,6 +252,8 @@ export async function syncCskhCustomers({
         closedDate: vnDateOf(
           Math.min(now, Math.max(conv.updatedAtMs, trackingSinceMs))
         ),
+        legacy: false,
+        debtMonth: null,
         price: null,
         payments: [],
         tags,
@@ -265,7 +270,10 @@ export async function syncCskhCustomers({
       if (prev.customerName !== conv.customerName) {
         patch.customerName = conv.customerName
       }
-      if (Boolean(prev.tagRemoved) !== !closed) patch.tagRemoved = !closed
+      // an old customer added by hand was never a tracked close
+      if (!prev.legacy && Boolean(prev.tagRemoved) !== !closed) {
+        patch.tagRemoved = !closed
+      }
       if (!prev.staffManual) {
         const staffKey = staffKeyFromTags(tags)
         if ((prev.staffKey ?? null) !== staffKey) patch.staffKey = staffKey
@@ -307,17 +315,20 @@ export async function readCskhReport(dates: string[]): Promise<{
   views: Record<string, Record<string, number>>
   customers: CskhCustomer[]
   closedTrackedFrom: string | null
+  pancakeClosed: Record<string, number>
   lastSyncedAtMs: number | null
   warnings: string[]
 }> {
   const warnings: string[] = []
   const views: Record<string, Record<string, number>> = {}
+  const pancakeClosed: Record<string, number> = {}
   for (const date of dates) views[date] = {}
   if (dates.length === 0) {
     return {
       views,
       customers: [],
       closedTrackedFrom: null,
+      pancakeClosed,
       lastSyncedAtMs: null,
       warnings,
     }
@@ -347,6 +358,14 @@ export async function readCskhReport(dates: string[]): Promise<{
         if (views[date]) views[date][staff.key] = stats.totalsByTagId[id][i] ?? 0
       })
     }
+    const closedId = Object.keys(stats.tagText).find(
+      (tagId) => normTag(stats.tagText[tagId]) === CSKH_CLOSED_TAG
+    )
+    if (closedId) {
+      stats.dates.forEach((date, i) => {
+        pancakeClosed[date] = stats.totalsByTagId[closedId][i] ?? 0
+      })
+    }
   }
 
   const customers = customersSnap.docs
@@ -367,7 +386,7 @@ export async function readCskhReport(dates: string[]): Promise<{
     )
   } else if (from < closedTrackedFrom) {
     warnings.push(
-      `Khách chốt được ghi nhận từ ${closedTrackedFrom.split("-").reverse().join("/")} — các ngày trước đó hiện "—".`
+      `Trước ${closedTrackedFrom.split("-").reverse().join("/")}: khách chốt ở cột Tổng lấy theo số tag "Chốt sale" của Pancake. Pancake không lưu ngày gắn tag của từng khách, nên phần chia theo nhân viên, giá bản luận và AOV chỉ có từ ngày này (trước đó hiện "—").`
     )
   }
 
@@ -375,6 +394,7 @@ export async function readCskhReport(dates: string[]): Promise<{
     views,
     customers,
     closedTrackedFrom,
+    pancakeClosed,
     lastSyncedAtMs: state.lastSyncedAtMs ?? null,
     warnings,
   }
@@ -392,10 +412,104 @@ function cleanPayments(value: unknown): CskhPayment[] {
       throw new CskhError("Số tiền trả phải lớn hơn 0")
     }
     if (typeof p.date !== "string" || !ISO_DATE.test(p.date)) {
-      throw new CskhError("Ngày trả không hợp lệ")
+      throw new CskhError("Ngày nhận tiền không hợp lệ")
     }
-    return { id: p.id, amount: Math.round(amount), date: p.date }
+    if (p.kind !== "chot" && p.kind !== "no") {
+      throw new CskhError("Chọn loại: khách chốt trả hay trả nợ")
+    }
+    if (p.kind === "no" && !(typeof p.debtMonth === "string" && ISO_MONTH.test(p.debtMonth))) {
+      throw new CskhError("Trả nợ cần chọn nợ của tháng nào")
+    }
+    return {
+      id: p.id,
+      amount: Math.round(amount),
+      date: p.date,
+      kind: p.kind,
+      debtMonth: p.kind === "no" ? p.debtMonth! : null,
+    }
   })
+}
+
+function newPaymentId(): string {
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
+ * "Thêm khách trả nợ": records an old customer (closed before tracking)
+ * paying off a debt, with that first payment. Keyed by the Pancake
+ * conversation when a link/id is given — adding the same conversation again
+ * appends the payment to the existing record instead.
+ */
+export async function createCskhDebtor(
+  input: CskhDebtorInput,
+  actorName: string
+): Promise<CskhCustomer> {
+  const customerName = String(input.customerName ?? "").trim()
+  if (!customerName) throw new CskhError("Nhập tên khách")
+  const staffKey = input.staffKey ?? null
+  if (staffKey !== null && !STAFF_KEYS.has(staffKey)) {
+    throw new CskhError("Nhân viên không hợp lệ")
+  }
+  if (!ISO_MONTH.test(String(input.debtMonth ?? ""))) {
+    throw new CskhError("Chọn nợ của tháng nào")
+  }
+  const price =
+    input.price == null || (input.price as unknown) === ""
+      ? null
+      : Number(input.price)
+  if (price != null && (!Number.isFinite(price) || price < 0)) {
+    throw new CskhError("Giá bản luận không hợp lệ")
+  }
+  const conversationId = input.conversation
+    ? parseConversationRef(input.conversation)
+    : null
+  if (input.conversation && !conversationId) {
+    throw new CskhError("Link / mã hội thoại Pancake không hợp lệ")
+  }
+  const [payment] = cleanPayments([
+    {
+      id: newPaymentId(),
+      amount: input.amount,
+      date: input.date,
+      kind: "no",
+      debtMonth: input.debtMonth,
+    },
+  ])
+
+  const db = adminDb()
+  const col = db.collection(CUSTOMERS)
+  const ref = conversationId ? col.doc(conversationId) : col.doc()
+  const snap = await ref.get()
+  if (snap.exists) {
+    const prev = mapCskhCustomer(snap.id, snap.data()!)
+    await ref.update({
+      payments: [...prev.payments, payment],
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedByName: actorName,
+    })
+  } else {
+    await ref.set({
+      pageId: CSKH_PAGE_ID,
+      customerName,
+      staffKey,
+      staffManual: true,
+      closedDate: "",
+      legacy: true,
+      debtMonth: input.debtMonth,
+      price: price == null ? null : Math.round(price),
+      payments: [payment],
+      tags: [],
+      tagRemoved: false,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedByName: actorName,
+    })
+    await db
+      .doc(STATE)
+      .set({ ids: FieldValue.arrayUnion(ref.id) }, { merge: true })
+  }
+  const fresh = await ref.get()
+  return mapCskhCustomer(fresh.id, fresh.data()!)
 }
 
 /** Saves the hand-edited fields of one record. */
