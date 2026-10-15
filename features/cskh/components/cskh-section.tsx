@@ -145,6 +145,10 @@ export function CskhSection({
         <CskhRevenueSheet report={report} />
       ) : report ? (
         <>
+          <CskhCustomerList
+            customers={report.customers}
+            onChange={upsertCustomer}
+          />
           <CskhDetailTable report={report} />
           <p className="text-xs text-muted-foreground">
             Khách xem = số lần gắn tag tên nhân viên trong ngày (giống Pancake,
@@ -154,10 +158,6 @@ export function CskhSection({
             theo ngày khách trả. AOV = giá bản luận / khách chốt · Tỉ lệ chốt =
             khách chốt / khách xem.
           </p>
-          <CskhCustomerList
-            customers={report.customers}
-            onChange={upsertCustomer}
-          />
         </>
       ) : null}
     </div>
