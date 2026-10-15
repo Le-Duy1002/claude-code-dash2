@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/chart"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
+import { CskhSection, syncCskh } from "@/features/cskh"
 
 import {
   autoSyncedRecently,
@@ -83,7 +84,7 @@ const PAGE_CHART_COLORS = [
 
 export function PageDashboardView() {
   const { user } = useAuth()
-  const [mode, setMode] = React.useState<"pages" | "demo">("pages")
+  const [mode, setMode] = React.useState<"pages" | "demo" | "cskh">("pages")
   const [dateRange, setDateRange] = React.useState<RangeValue>({
     range: "thisMonth",
   })
@@ -145,6 +146,37 @@ export function PageDashboardView() {
       dateRange.from,
       dateRange.to
     )
+    if (mode === "cskh") {
+      // re-read the Hẻm Trong Đường conversations back to the range start
+      const days = Math.ceil((Date.now() - fromMs) / 86_400_000) + 1
+      setSyncing("Đang đồng bộ khách chốt…")
+      try {
+        const r = await syncCskh(days)
+        if (r.phase === "baseline") {
+          if (r.baselineDone) {
+            toast.success(
+              "Đã lập xong danh sách khách chốt cũ — từ giờ app ghi nhận khách chốt mới."
+            )
+          } else {
+            toast.info(
+              `Đang lập danh sách khách chốt cũ: đã quét ${r.scanned.toLocaleString("vi-VN")} / khoảng 28.000 hội thoại — bấm "Đồng bộ ngay" lần nữa để quét tiếp.`
+            )
+          }
+        } else {
+          toast.success(
+            `Đã đồng bộ ${r.scanned} hội thoại · ${r.created} khách chốt mới${
+              r.truncated ? " (chưa quét hết, bấm lại để quét tiếp)" : ""
+            }`
+          )
+        }
+        setRefreshKey((k) => k + 1)
+      } catch (e) {
+        toast.error(`Đồng bộ lỗi: ${(e as Error).message}`)
+      } finally {
+        setSyncing(null)
+      }
+      return
+    }
     const fromISO = new Date(fromMs + 7 * 3_600_000).toISOString().slice(0, 10)
     const toISO = new Date(Math.min(toMs, Date.now()) - 1 + 7 * 3_600_000)
       .toISOString()
@@ -209,7 +241,9 @@ export function PageDashboardView() {
           <p className="text-sm text-muted-foreground">
             {mode === "pages"
               ? "Hội thoại mới, đơn chốt, tỉ lệ chốt — lọc theo khoảng thời gian và khung giờ, gộp chung hoặc theo từng trang."
-              : "Phễu demo: nhắn đến → cá nhân xem → cá nhân chốt, theo từng người hoặc cả team."}
+              : mode === "demo"
+                ? "Phễu demo: nhắn đến → cá nhân xem → cá nhân chốt, theo từng người hoặc cả team."
+                : "Chăm sóc khách hàng (Hẻm Trong Đường): khách xem, khách chốt, giá bản luận, đã trả — theo tháng, tuần, ngày và từng nhân viên."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -248,10 +282,19 @@ export function PageDashboardView() {
         >
           Demo
         </Button>
+        <Button
+          size="sm"
+          variant={mode === "cskh" ? "default" : "ghost"}
+          onClick={() => setMode("cskh")}
+        >
+          Chăm sóc khách hàng
+        </Button>
       </div>
 
       {mode === "demo" ? (
         <DemoDashboardSection dateRange={dateRange} refreshKey={refreshKey} />
+      ) : mode === "cskh" ? (
+        <CskhSection dateRange={dateRange} refreshKey={refreshKey} />
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-1.5">

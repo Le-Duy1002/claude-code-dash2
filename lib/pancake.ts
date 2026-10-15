@@ -642,6 +642,8 @@ export async function fetchWebTagStatistics(
   totalsByTagId: Record<string, number[]>
   /** tag id -> tag text, lowercased + trimmed to match `TAG_NAMES`/`DEMO_*_TAG_BY_STAFF` */
   tagText: Record<string, string>
+  /** tag id -> tag text as Pancake shows it (trimmed, original case) */
+  tagLabel: Record<string, string>
 }> {
   const dateRange = `${toPancakeDate(fromISO)} 00:00:00 - ${toPancakeDate(toISO)} 23:59:59`
   const url = new URL("https://pancake.vn/api/v1/statistics/tags")
@@ -691,9 +693,11 @@ export async function fetchWebTagStatistics(
   const series = json.data?.series ?? {}
   const totalsByTagId: Record<string, number[]> = {}
   const tagText: Record<string, string> = {}
+  const tagLabel: Record<string, string> = {}
   for (const [id, info] of Object.entries(json.tags_list ?? {})) {
     if (!info.text) continue
     tagText[id] = info.text.trim().toLowerCase()
+    tagLabel[id] = info.text.trim()
     // single-page calls key the real (nonzero) series under "tag_<id>"; the
     // plain "<id>" key exists too but is always zero — not documented
     // anywhere, just observed, so fall back to it defensively.
@@ -701,7 +705,7 @@ export async function fetchWebTagStatistics(
     totalsByTagId[id] = dates.map((_, i) => Number(rows[i]?.total ?? 0))
   }
 
-  return { dates, totalsByTagId, tagText }
+  return { dates, totalsByTagId, tagText, tagLabel }
 }
 
 // ---------------------------------------------------------- INBOX: messages

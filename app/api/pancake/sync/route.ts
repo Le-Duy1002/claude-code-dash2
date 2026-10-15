@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { syncCskhCustomers } from "@/lib/cskh"
 import { adminAuth } from "@/lib/firebase-admin"
 import { syncDays } from "@/features/pancake/services/pancake-sync"
 import { vnDatesInRange } from "@/features/pancake/types"
@@ -42,6 +43,7 @@ const MAX_SPAN = 16
  * `.github/workflows/pancake-sync.yml` on a schedule.
  */
 export async function POST(request: Request) {
+  const startedAt = Date.now()
   if (!(await authorize(request))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 })
   }
@@ -82,6 +84,16 @@ export async function POST(request: Request) {
       fresh,
       resumeToken
     )
+    // the cron / auto-sync form (`?days=`) also refreshes the Hẻm Trong Đường
+    // closed-customer list, in whatever is left of the route's time budget
+    const cskhDeadlineMs = startedAt + 280_000
+    if (!dateParam && !(fromParam && toParam) && cskhDeadlineMs - Date.now() > 10_000) {
+      try {
+        await syncCskhCustomers({ sinceDays: 3, deadlineMs: cskhDeadlineMs })
+      } catch (error) {
+        errors.push(`CSKH: ${(error as Error).message}`)
+      }
+    }
     return NextResponse.json({
       ok: true,
       walkAdvanced,
