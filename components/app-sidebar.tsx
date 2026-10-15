@@ -4,9 +4,7 @@ import * as React from "react"
 import Image from "next/image"
 import Link from "next/link"
 
-import { NavDocuments } from "@/components/nav-documents"
 import { NavMain, type NavSection } from "@/components/nav-main"
-import { NavSecondary } from "@/components/nav-secondary"
 import { NavUser } from "@/components/nav-user"
 import {
   Sidebar,
@@ -17,7 +15,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { FolderIcon, FolderOpenIcon, CameraIcon, FileTextIcon, Settings2Icon, CircleHelpIcon, SearchIcon, DatabaseIcon, ClipboardListIcon, GaugeIcon, CalendarClockIcon, CalendarDaysIcon, BanknoteIcon, LineChartIcon } from "lucide-react"
+import { FolderIcon, FolderOpenIcon, CameraIcon, FileTextIcon, ClipboardListIcon, GaugeIcon, CalendarClockIcon, CalendarDaysIcon, BanknoteIcon, LineChartIcon } from "lucide-react"
 
 const data = {
   user: {
@@ -139,42 +137,6 @@ const data = {
       ],
     },
   ],
-  navSecondary: [
-    {
-      title: "Cài đặt",
-      url: "#",
-      icon: (
-        <Settings2Icon
-        />
-      ),
-    },
-    {
-      title: "Trợ giúp",
-      url: "#",
-      icon: (
-        <CircleHelpIcon
-        />
-      ),
-    },
-    {
-      title: "Tìm kiếm",
-      url: "#",
-      icon: (
-        <SearchIcon
-        />
-      ),
-    },
-  ],
-  documents: [
-    {
-      name: "Thư viện dữ liệu",
-      url: "#",
-      icon: (
-        <DatabaseIcon
-        />
-      ),
-    },
-  ],
 }
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
@@ -200,8 +162,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain sections={data.navSections} />
-        <NavDocuments items={data.documents} />
-        <NavSecondary items={data.navSecondary} className="mt-auto" />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={data.user} />
