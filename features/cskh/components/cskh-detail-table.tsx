@@ -52,7 +52,9 @@ const OPENS_CUSTOMERS = new Set([1, 2, 3])
 type GroupTone = {
   /** group name header */
   head: string
-  /** metric-name header */
+  /** metric-name header row — tinted text, a bit more fill, a rule below */
+  label: string
+  /** month / grand-total rows */
   sub: string
   /** body cells */
   cell: string
@@ -63,30 +65,39 @@ type GroupTone = {
 const GROUP_TONES: Record<string, GroupTone> = {
   [CSKH_TOTAL]: {
     head: "bg-muted text-foreground",
+    label: "bg-muted text-foreground/85 border-b-foreground/30",
     sub: "bg-muted/70",
     cell: "bg-muted/40",
     edge: "border-l-foreground/25",
   },
   duy: {
     head: "bg-sky-100 text-sky-900 dark:bg-sky-500/20 dark:text-sky-200",
+    label:
+      "bg-sky-100/70 text-sky-800 border-b-sky-400/60 dark:bg-sky-500/15 dark:text-sky-300 dark:border-b-sky-400/40",
     sub: "bg-sky-50 dark:bg-sky-500/10",
     cell: "bg-sky-50/60 dark:bg-sky-500/5",
     edge: "border-l-sky-400/70 dark:border-l-sky-400/50",
   },
   ky: {
     head: "bg-emerald-100 text-emerald-900 dark:bg-emerald-500/20 dark:text-emerald-200",
+    label:
+      "bg-emerald-100/70 text-emerald-800 border-b-emerald-400/60 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-b-emerald-400/40",
     sub: "bg-emerald-50 dark:bg-emerald-500/10",
     cell: "bg-emerald-50/60 dark:bg-emerald-500/5",
     edge: "border-l-emerald-400/70 dark:border-l-emerald-400/50",
   },
   thang: {
     head: "bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200",
+    label:
+      "bg-amber-100/70 text-amber-800 border-b-amber-400/60 dark:bg-amber-500/15 dark:text-amber-300 dark:border-b-amber-400/40",
     sub: "bg-amber-50 dark:bg-amber-500/10",
     cell: "bg-amber-50/60 dark:bg-amber-500/5",
     edge: "border-l-amber-400/70 dark:border-l-amber-400/50",
   },
   thuong: {
     head: "bg-pink-100 text-pink-900 dark:bg-pink-500/20 dark:text-pink-200",
+    label:
+      "bg-pink-100/70 text-pink-800 border-b-pink-400/60 dark:bg-pink-500/15 dark:text-pink-300 dark:border-b-pink-400/40",
     sub: "bg-pink-50 dark:bg-pink-500/10",
     cell: "bg-pink-50/60 dark:bg-pink-500/5",
     edge: "border-l-pink-400/70 dark:border-l-pink-400/50",
@@ -250,7 +261,7 @@ export function CskhDetailTable({
             <tr className="border-b bg-muted/50">
               <th
                 rowSpan={2}
-                className="sticky left-0 z-10 min-w-44 bg-muted px-3 py-2 text-left font-semibold"
+                className="sticky left-0 z-10 min-w-44 border-b-2 border-b-foreground/30 bg-muted px-3 py-2 text-left font-semibold"
               >
                 Thời gian
               </th>
@@ -268,15 +279,15 @@ export function CskhDetailTable({
                 </th>
               ))}
             </tr>
-            <tr className="border-b">
+            <tr>
               {CSKH_GROUPS.map((g) =>
                 METRIC_COLS.map((c, i) => (
                   <th
                     key={`${g.key}-${c.key}`}
                     className={cn(
-                      "px-2 py-1.5 text-right font-medium whitespace-nowrap text-muted-foreground",
+                      "border-b-2 px-2 py-2 text-right font-semibold whitespace-nowrap",
                       dividerClass(g.key, i),
-                      toneOf(g.key).sub
+                      toneOf(g.key).label
                     )}
                   >
                     {c.label}
