@@ -45,16 +45,78 @@ const METRIC_COLS: { key: string; label: string }[] = [
 /** column index → opens that group's customers for the row's period */
 const OPENS_CUSTOMERS = new Set([1, 2, 3])
 
+/**
+ * A soft tint per column group so each person's six columns read as one
+ * block. Duy and Thương match their colours on the Lịch làm grid.
+ */
+type GroupTone = {
+  /** group name header */
+  head: string
+  /** metric-name header */
+  sub: string
+  /** body cells */
+  cell: string
+  /** the thick divider on the group's left edge */
+  edge: string
+}
+
+const GROUP_TONES: Record<string, GroupTone> = {
+  [CSKH_TOTAL]: {
+    head: "bg-muted text-foreground",
+    sub: "bg-muted/70",
+    cell: "bg-muted/40",
+    edge: "border-l-foreground/25",
+  },
+  duy: {
+    head: "bg-sky-100 text-sky-900 dark:bg-sky-500/20 dark:text-sky-200",
+    sub: "bg-sky-50 dark:bg-sky-500/10",
+    cell: "bg-sky-50/60 dark:bg-sky-500/5",
+    edge: "border-l-sky-400/70 dark:border-l-sky-400/50",
+  },
+  ky: {
+    head: "bg-emerald-100 text-emerald-900 dark:bg-emerald-500/20 dark:text-emerald-200",
+    sub: "bg-emerald-50 dark:bg-emerald-500/10",
+    cell: "bg-emerald-50/60 dark:bg-emerald-500/5",
+    edge: "border-l-emerald-400/70 dark:border-l-emerald-400/50",
+  },
+  thang: {
+    head: "bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200",
+    sub: "bg-amber-50 dark:bg-amber-500/10",
+    cell: "bg-amber-50/60 dark:bg-amber-500/5",
+    edge: "border-l-amber-400/70 dark:border-l-amber-400/50",
+  },
+  thuong: {
+    head: "bg-pink-100 text-pink-900 dark:bg-pink-500/20 dark:text-pink-200",
+    sub: "bg-pink-50 dark:bg-pink-500/10",
+    cell: "bg-pink-50/60 dark:bg-pink-500/5",
+    edge: "border-l-pink-400/70 dark:border-l-pink-400/50",
+  },
+}
+
+function toneOf(group: string): GroupTone {
+  return GROUP_TONES[group] ?? GROUP_TONES[CSKH_TOTAL]
+}
+
+/** thin divider between metric columns, thick tinted one at a group's edge */
+function dividerClass(group: string, index: number): string {
+  return index === 0
+    ? cn("border-l-2", toneOf(group).edge)
+    : "border-l border-l-border/70"
+}
+
 type OpenCell = { group: string; period: CskhPeriod }
 
 function MetricCells({
   period,
   sums,
   onOpen,
+  strong,
 }: {
   period: CskhPeriod
   sums: Record<string, CskhMetrics>
   onOpen: (cell: OpenCell) => void
+  /** a month / grand-total row — a little more tint */
+  strong?: boolean
 }) {
   return (
     <>
@@ -75,8 +137,8 @@ function MetricCells({
             key={`${g.key}-${i}`}
             className={cn(
               "px-2 py-1.5 text-right whitespace-nowrap tabular-nums",
-              i === 0 && "border-l-2",
-              g.key === CSKH_TOTAL && "bg-muted/30"
+              dividerClass(g.key, i),
+              strong ? toneOf(g.key).sub : toneOf(g.key).cell
             )}
           >
             {clickable && OPENS_CUSTOMERS.has(i) ? (
@@ -197,22 +259,24 @@ export function CskhDetailTable({
                   key={g.key}
                   colSpan={METRIC_COLS.length}
                   className={cn(
-                    "border-l-2 px-2 py-1.5 text-center font-semibold",
-                    g.key === CSKH_TOTAL && "bg-muted"
+                    "px-2 py-1.5 text-center text-sm font-semibold",
+                    dividerClass(g.key, 0),
+                    toneOf(g.key).head
                   )}
                 >
                   {g.name}
                 </th>
               ))}
             </tr>
-            <tr className="border-b bg-muted/30">
+            <tr className="border-b">
               {CSKH_GROUPS.map((g) =>
                 METRIC_COLS.map((c, i) => (
                   <th
                     key={`${g.key}-${c.key}`}
                     className={cn(
                       "px-2 py-1.5 text-right font-medium whitespace-nowrap text-muted-foreground",
-                      i === 0 && "border-l-2"
+                      dividerClass(g.key, i),
+                      toneOf(g.key).sub
                     )}
                   >
                     {c.label}
@@ -234,6 +298,7 @@ export function CskhDetailTable({
                   period={node}
                   sums={sumMetrics(daily, node.dates)}
                   onOpen={setOpenCell}
+                  strong={node.level === "month"}
                 />
               </tr>
             ))}
@@ -248,6 +313,7 @@ export function CskhDetailTable({
                   period={grand}
                   sums={sumMetrics(daily, report.dates)}
                   onOpen={setOpenCell}
+                  strong
                 />
               </tr>
             </tfoot>
