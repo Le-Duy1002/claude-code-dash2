@@ -157,6 +157,33 @@ export type CskhDebtorInput = {
   date: string
 }
 
+/**
+ * A "Tìm khách" result: a customer already in the app, or a Pancake
+ * conversation that isn't (an old customer — paying a debt adds them).
+ */
+export type CskhSearchHit =
+  | { kind: "record"; customer: CskhCustomer }
+  | {
+      kind: "pancake"
+      conversationId: string
+      customerName: string
+      /** from the conversation's staff name tag, if any */
+      staffKey: string | null
+      tags: string[]
+      updatedAtMs: number
+    }
+
+/** Name as compared in search: no accents, đ→d, lowercase, single spaces. */
+export function foldName(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[đĐ]/g, "d")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
 export const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 export const ISO_MONTH = /^\d{4}-\d{2}$/
 

@@ -512,6 +512,40 @@ export async function fetchConversationsSince(
   }
 }
 
+/**
+ * Pancake's own conversation search for a page. It matches customer names AND
+ * message text, so callers that want a name match must filter.
+ */
+export async function searchConversations(
+  fbPageId: string,
+  query: string
+): Promise<PancakeConversation[]> {
+  const url = new URL(`${INBOX_BASE}/pages/${fbPageId}/conversations/search`)
+  url.searchParams.set("access_token", INBOX_TOKEN)
+  url.searchParams.set("q", query)
+  const body = await inboxJson<{ conversations?: Record<string, unknown>[] }>(
+    url.toString()
+  )
+  return (body.conversations ?? []).map(mapConversation)
+}
+
+/** One conversation by id, or null when Pancake doesn't know it. */
+export async function fetchConversation(
+  fbPageId: string,
+  conversationId: string
+): Promise<PancakeConversation | null> {
+  const url = new URL(
+    `${INBOX_BASE}/pages/${fbPageId}/conversations/${encodeURIComponent(conversationId)}`
+  )
+  url.searchParams.set("access_token", INBOX_TOKEN)
+  try {
+    const body = await inboxJson<Record<string, unknown>>(url.toString())
+    return body.id ? mapConversation(body) : null
+  } catch {
+    return null
+  }
+}
+
 // ------------------------------------------------- INBOX: daily statistics
 
 /**

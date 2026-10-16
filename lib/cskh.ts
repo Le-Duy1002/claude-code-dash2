@@ -3,13 +3,19 @@ import "server-only"
 import { FieldValue } from "firebase-admin/firestore"
 
 import { adminDb } from "@/lib/firebase-admin"
-import { fetchConversationsSince, fetchWebTagStatistics } from "@/lib/pancake"
+import {
+  fetchConversation,
+  fetchConversationsSince,
+  fetchWebTagStatistics,
+  searchConversations,
+} from "@/lib/pancake"
 import {
   CSKH_CLOSED_TAG,
   CSKH_PAGE_ID,
   CSKH_STAFF,
   ISO_DATE,
   ISO_MONTH,
+  foldName,
   isRelevant,
   mapCskhCustomer,
   normTag,
@@ -20,6 +26,7 @@ import {
   type CskhCustomerPatch,
   type CskhDebtorInput,
   type CskhPayment,
+  type CskhSearchHit,
   type CskhSyncResult,
 } from "@/features/cskh/types"
 
@@ -398,6 +405,75 @@ export async function readCskhReport(dates: string[]): Promise<{
     lastSyncedAtMs: state.lastSyncedAtMs ?? null,
     warnings,
   }
+}
+
+const SEARCH_LIMIT = 20
+
+/**
+ * "Tìm khách": a pasted Pancake link/id finds that one conversation; a name
+ * finds customers already in the app plus Pancake conversations whose
+ * CUSTOMER NAME matches (Pancake's search also matches message text — those
+ * are dropped). A conversation that has a record shows as the record.
+ */
+export async function searchCskhCustomers(
+  query: string
+): Promise<CskhSearchHit[]> {
+  const text = query.trim()
+  const records = (await adminDb().collection(CUSTOMERS).get()).docs.map(
+    (doc) => mapCskhCustomer(doc.id, doc.data())
+  )
+  const byId = new Map(records.map((c) => [c.id, c]))
+
+  const ref = parseConversationRef(text)
+  if (ref) {
+    const record = byId.get(ref)
+    if (record) return [{ kind: "record", customer: record }]
+    const conv = await fetchConversation(CSKH_PAGE_ID, ref)
+    if (!conv) return []
+    const tags = (await tagNamer())(conv.tagIds)
+    return [
+      {
+        kind: "pancake",
+        conversationId: conv.id,
+        customerName: conv.customerName,
+        staffKey: staffKeyFromTags(tags),
+        tags,
+        updatedAtMs: conv.updatedAtMs,
+      },
+    ]
+  }
+
+  const folded = foldName(text)
+  if (folded.length < 2) return []
+  const recordHits: CskhSearchHit[] = records
+    .filter((c) => foldName(c.customerName).includes(folded))
+    .sort((a, b) => a.customerName.localeCompare(b.customerName, "vi"))
+    .slice(0, SEARCH_LIMIT)
+    .map((customer) => ({ kind: "record", customer }))
+
+  const [convs, tagsOf] = await Promise.all([
+    searchConversations(CSKH_PAGE_ID, text).catch(() => []),
+    tagNamer(),
+  ])
+  const pancakeHits: CskhSearchHit[] = convs
+    .filter(
+      (conv) =>
+        !byId.has(conv.id) && foldName(conv.customerName).includes(folded)
+    )
+    .slice(0, SEARCH_LIMIT)
+    .map((conv) => {
+      const tags = tagsOf(conv.tagIds)
+      return {
+        kind: "pancake",
+        conversationId: conv.id,
+        customerName: conv.customerName,
+        staffKey: staffKeyFromTags(tags),
+        tags,
+        updatedAtMs: conv.updatedAtMs,
+      }
+    })
+
+  return [...recordHits, ...pancakeHits]
 }
 
 const STAFF_KEYS = new Set(CSKH_STAFF.map((s) => s.key))

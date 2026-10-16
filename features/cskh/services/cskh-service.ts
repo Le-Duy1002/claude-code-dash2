@@ -6,6 +6,7 @@ import type {
   CskhCustomerPatch,
   CskhDebtorInput,
   CskhReport,
+  CskhSearchHit,
   CskhSyncResult,
 } from "../types"
 
@@ -85,6 +86,19 @@ export async function updateCskhCustomer(
   })
   const body = await readJson<{ customer: CskhCustomer }>(response)
   return body.customer
+}
+
+/** "Tìm khách" — by name, or a pasted Pancake conversation link / id. */
+export async function searchCskh(
+  query: string,
+  signal?: AbortSignal
+): Promise<CskhSearchHit[]> {
+  const response = await fetch(
+    `/api/cskh/search?${new URLSearchParams({ q: query })}`,
+    { headers: { Authorization: `Bearer ${await idToken()}` }, signal }
+  )
+  const body = await readJson<{ hits: CskhSearchHit[] }>(response)
+  return body.hits
 }
 
 /** "Thêm khách trả nợ" — returns the (new or existing) record. */
