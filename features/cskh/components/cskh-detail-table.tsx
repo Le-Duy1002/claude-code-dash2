@@ -1,8 +1,14 @@
 "use client"
 
 import * as React from "react"
-import { Popover } from "@base-ui/react/popover"
 
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 
 import {
@@ -10,18 +16,16 @@ import {
   CSKH_TOTAL,
   aov,
   closeRate,
-  cskhStaffName,
   dailyMetrics,
-  formatDm,
   formatMoney,
-  formatMonth,
   formatPct,
-  paymentsIn,
   sumMetrics,
+  type CskhCustomer,
   type CskhMetrics,
   type CskhPeriod,
   type CskhReport,
 } from "../types"
+import { CskhCustomerTable } from "./cskh-customer-list"
 import {
   PeriodExpandButtons,
   PeriodLabelCell,
@@ -38,74 +42,19 @@ const METRIC_COLS: { key: string; label: string }[] = [
   { key: "rate", label: "Tỉ lệ chốt" },
 ]
 
-function PaidCell({
-  report,
-  period,
-  group,
-  value,
-}: {
-  report: CskhReport
-  period: CskhPeriod
-  group: string
-  value: number
-}) {
-  if (value === 0) return <span className="text-muted-foreground">0</span>
-  const payments = paymentsIn(report.customers, period.dates, group)
-  const groupName = CSKH_GROUPS.find((g) => g.key === group)?.name ?? ""
-  return (
-    <Popover.Root>
-      <Popover.Trigger className="font-medium underline decoration-dotted underline-offset-2 hover:decoration-solid">
-        {formatMoney(value)}
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Positioner sideOffset={4} align="end" className="z-50">
-          <Popover.Popup className="z-50 w-80 rounded-lg border bg-popover p-3 text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95">
-            <p className="mb-2 text-sm font-medium">
-              Đã trả · {groupName} · {period.label}
-            </p>
-            <div className="flex max-h-72 flex-col gap-1 overflow-y-auto text-sm">
-              {payments.map((p) => (
-                <div
-                  key={p.id}
-                  className="flex items-center justify-between gap-2"
-                >
-                  <span className="min-w-0 truncate">
-                    <span className="text-muted-foreground tabular-nums">
-                      {formatDm(p.date)}
-                    </span>{" "}
-                    {p.customerName}
-                    <span className="text-muted-foreground">
-                      {group === CSKH_TOTAL
-                        ? ` · ${cskhStaffName(p.staffKey)}`
-                        : ""}
-                      {p.kind === "no" ? ` · trả nợ ${formatMonth(p.debtMonth)}` : ""}
-                    </span>
-                  </span>
-                  <span className="shrink-0 tabular-nums">
-                    {formatMoney(p.amount)}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-2 flex justify-between border-t pt-2 text-sm font-medium">
-              <span>Tổng</span>
-              <span className="tabular-nums">{formatMoney(value)}</span>
-            </div>
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
-  )
-}
+/** column index → opens that group's customers for the row's period */
+const OPENS_CUSTOMERS = new Set([1, 2, 3])
+
+type OpenCell = { group: string; period: CskhPeriod }
 
 function MetricCells({
-  report,
   period,
   sums,
+  onOpen,
 }: {
-  report: CskhReport
   period: CskhPeriod
   sums: Record<string, CskhMetrics>
+  onOpen: (cell: OpenCell) => void
 }) {
   return (
     <>
@@ -115,16 +64,12 @@ function MetricCells({
           m.viewed,
           m.closedKnown ? m.closed : "—",
           m.tracked ? formatMoney(m.price) : "—",
-          <PaidCell
-            key="paid"
-            report={report}
-            period={period}
-            group={g.key}
-            value={m.paid}
-          />,
+          formatMoney(m.paid),
           formatMoney(aov(m)),
           formatPct(closeRate(m)),
         ]
+        // the customer list exists from tracking on, and for any payment
+        const clickable = m.tracked || m.paid > 0
         return cells.map((cell, i) => (
           <td
             key={`${g.key}-${i}`}
@@ -134,7 +79,18 @@ function MetricCells({
               g.key === CSKH_TOTAL && "bg-muted/30"
             )}
           >
-            {cell}
+            {clickable && OPENS_CUSTOMERS.has(i) ? (
+              <button
+                type="button"
+                onClick={() => onOpen({ group: g.key, period })}
+                title="Bấm để xem / nhập khách chốt, giá bản luận, tiền đã trả"
+                className="rounded px-1 underline decoration-dotted underline-offset-2 hover:bg-muted hover:decoration-solid"
+              >
+                {cell}
+              </button>
+            ) : (
+              cell
+            )}
           </td>
         ))
       })}
@@ -142,15 +98,74 @@ function MetricCells({
   )
 }
 
+/** One staff's (or everyone's) customers for one period, editable. */
+function PeriodCustomersDialog({
+  report,
+  cell,
+  onClose,
+  onCustomerChange,
+}: {
+  report: CskhReport
+  cell: OpenCell | null
+  onClose: () => void
+  onCustomerChange: (next: CskhCustomer) => void
+}) {
+  const customers = React.useMemo(() => {
+    if (!cell) return []
+    const dates = new Set(cell.period.dates)
+    return report.customers.filter(
+      (c) =>
+        (cell.group === CSKH_TOTAL || c.staffKey === cell.group) &&
+        (dates.has(c.closedDate) || c.payments.some((p) => dates.has(p.date)))
+    )
+  }, [report.customers, cell])
+  const groupName = CSKH_GROUPS.find((g) => g.key === cell?.group)?.name ?? ""
+
+  return (
+    <Dialog open={cell != null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[85vh] max-w-5xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>
+            {groupName} · {cell?.period.label}
+          </DialogTitle>
+          <DialogDescription>
+            Khách chốt và khách trả tiền trong khoảng này. Nhập giá bản luận ở
+            ô giá; bấm ô Đã trả để thêm lần nhận tiền (chọn ngày nhận, khách
+            chốt trả hay trả nợ). Bảng tự cộng lại.
+          </DialogDescription>
+        </DialogHeader>
+        {customers.length ? (
+          <CskhCustomerTable
+            customers={customers}
+            onChange={onCustomerChange}
+          />
+        ) : (
+          <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+            Không có khách chốt hay khoản trả tiền nào trong khoảng này.
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 /**
  * Thống kê chi tiết: one row per month, week and day over the selected range
  * (months sum their weeks, weeks their days), with the six metrics for the
- * total and for each staff side by side.
+ * total and for each staff side by side. Khách chốt / giá / đã trả cells open
+ * that staff's customers for the row's period to enter prices and payments.
  */
-export function CskhDetailTable({ report }: { report: CskhReport }) {
+export function CskhDetailTable({
+  report,
+  onCustomerChange,
+}: {
+  report: CskhReport
+  onCustomerChange: (next: CskhCustomer) => void
+}) {
   const daily = React.useMemo(() => dailyMetrics(report), [report])
   const { tree, rows, expanded, toggle, expandAll, collapseAll } =
     usePeriodTree(report.dates)
+  const [openCell, setOpenCell] = React.useState<OpenCell | null>(null)
 
   const grand: CskhPeriod = {
     id: "all",
@@ -216,9 +231,9 @@ export function CskhDetailTable({ report }: { report: CskhReport }) {
                   onToggle={() => toggle(node.id)}
                 />
                 <MetricCells
-                  report={report}
                   period={node}
                   sums={sumMetrics(daily, node.dates)}
+                  onOpen={setOpenCell}
                 />
               </tr>
             ))}
@@ -230,15 +245,22 @@ export function CskhDetailTable({ report }: { report: CskhReport }) {
                   Tổng cả kỳ
                 </td>
                 <MetricCells
-                  report={report}
                   period={grand}
                   sums={sumMetrics(daily, report.dates)}
+                  onOpen={setOpenCell}
                 />
               </tr>
             </tfoot>
           ) : null}
         </table>
       </div>
+
+      <PeriodCustomersDialog
+        report={report}
+        cell={openCell}
+        onClose={() => setOpenCell(null)}
+        onCustomerChange={onCustomerChange}
+      />
     </div>
   )
 }

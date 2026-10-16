@@ -145,19 +145,23 @@ export function CskhSection({
         <CskhRevenueSheet report={report} />
       ) : report ? (
         <>
-          <CskhCustomerList
-            customers={report.customers}
-            onChange={upsertCustomer}
+          <CskhDetailTable
+            report={report}
+            onCustomerChange={upsertCustomer}
           />
-          <CskhDetailTable report={report} />
           <p className="text-xs text-muted-foreground">
             Khách xem = số lần gắn tag tên nhân viên trong ngày (giống Pancake,
             có thể âm khi gỡ tag). Khách chốt = hội thoại có cả tag
             &quot;Chốt sale&quot; và tag tên nhân viên, tính vào ngày được gắn
             &quot;Chốt sale&quot;. Giá bản luận tính theo ngày chốt, Đã trả
             theo ngày khách trả. AOV = giá bản luận / khách chốt · Tỉ lệ chốt =
-            khách chốt / khách xem.
+            khách chốt / khách xem. Bấm ô Khách chốt / Giá bản luận / Đã trả
+            của một người để nhập giá và tiền trả của khách người đó.
           </p>
+          <CskhCustomerList
+            customers={report.customers}
+            onChange={upsertCustomer}
+          />
         </>
       ) : null}
     </div>
