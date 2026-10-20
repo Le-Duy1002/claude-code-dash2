@@ -393,6 +393,14 @@ function mapConversation(raw: Record<string, unknown>): PancakeConversation {
  * conversations the caller already holds — NOT `page_number` (which is silently
  * ignored and always returns the first batch). Walk batches until one lands
  * entirely before `sinceMs`.
+ *
+ * By default the list puts every UNREAD conversation first, however old
+ * (Hẻm Trong Đường has months-old unread ones), so a batch of stale unread
+ * threads made the walk stop long before the recently updated read ones —
+ * 20/10/2026 a 3-day walk there saw 133 of 495 touched conversations.
+ * `unread_first=false` gives one strict `updated_at`-descending list
+ * (checked on every page, 3- and 7-day walks: zero order violations, and a
+ * whole-page walk found nothing in the window this one missed).
  */
 export type ConversationsSinceResult = {
   conversations: PancakeConversation[]
@@ -462,6 +470,7 @@ export async function fetchConversationsSince(
     const url = new URL(`${INBOX_BASE}/pages/${fbPageId}/conversations`)
     url.searchParams.set("access_token", INBOX_TOKEN)
     url.searchParams.set("current_count", String(cursor))
+    url.searchParams.set("unread_first", "false")
     const body = await inboxJson<{ conversations?: Record<string, unknown>[] }>(
       url.toString()
     )
