@@ -151,9 +151,11 @@ export function CskhSection({
           />
           <p className="text-xs text-muted-foreground">
             Khách xem = số lần gắn tag tên nhân viên trong ngày (giống Pancake,
-            có thể âm khi gỡ tag). Khách chốt = hội thoại có cả tag
-            &quot;Chốt sale&quot; và tag tên nhân viên, tính vào ngày được gắn
-            &quot;Chốt sale&quot;. Giá bản luận tính theo ngày chốt, Đã trả
+            có thể âm khi gỡ tag). Khách chốt ở cột Tổng = số lần gắn tag
+            &quot;Chốt sale&quot; trong ngày theo Thẻ hội thoại của Pancake; ở
+            cột từng người = hội thoại có cả tag &quot;Chốt sale&quot; và tag
+            tên người đó, tính vào ngày Pancake ghi nhận gắn &quot;Chốt
+            sale&quot;. Giá bản luận tính theo ngày chốt, Đã trả
             theo ngày khách trả. AOV = giá bản luận / khách chốt · Tỉ lệ chốt =
             khách chốt / khách xem. Bấm ô Khách chốt / Giá bản luận / Đã trả
             của một người để nhập giá và tiền trả của khách người đó.

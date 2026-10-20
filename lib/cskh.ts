@@ -6,8 +6,10 @@ import { adminDb } from "@/lib/firebase-admin"
 import {
   fetchConversation,
   fetchConversationsSince,
+  fetchWebTagHourly,
   fetchWebTagStatistics,
   searchConversations,
+  type PancakeConversation,
 } from "@/lib/pancake"
 import {
   CSKH_CLOSED_TAG,
@@ -16,6 +18,7 @@ import {
   ISO_DATE,
   ISO_MONTH,
   foldName,
+  formatDm,
   isRelevant,
   mapCskhCustomer,
   normTag,
@@ -44,8 +47,13 @@ import {
 const CUSTOMERS = "cskhCustomers"
 const BASELINE = "cskhBaseline"
 const STATE = "cskhMeta/state"
+const HOUR = 3_600_000
 const DAY = 86_400_000
 const BASELINE_CHUNK = 4000
+/** How far back a "Chốt sale" Pancake has but no record yet keeps being looked for. */
+const MATCH_DAYS = 7
+/** Longest a close is dated before the conversation's last update. */
+const MAX_MATCH_LAG = 3 * DAY
 
 type CskhState = {
   /** every `cskhCustomers` id */
@@ -170,6 +178,86 @@ export class CskhError extends Error {
   }
 }
 
+/**
+ * Pancake's own record of "Chốt sale" being put on conversations (Thẻ hội
+ * thoại, hour by hour, net of removals) since `fromMs`, and per Vietnam day
+ * how many of those no record is dated to yet.
+ */
+type ClosedSlots = {
+  /** one hour start (epoch ms) per tag put on, latest first */
+  events: number[]
+  /** VN day -> events that day not yet taken by a record */
+  free: Map<string, number>
+}
+
+async function closedSlots(
+  fromMs: number,
+  now: number,
+  recordDates: string[]
+): Promise<ClosedSlots> {
+  const { hours, totalsByTagId, tagText } = await fetchWebTagHourly(
+    CSKH_PAGE_ID,
+    vnDateOf(fromMs),
+    vnDateOf(now)
+  )
+  const id = Object.keys(tagText).find(
+    (tagId) => normTag(tagText[tagId]) === CSKH_CLOSED_TAG
+  )
+  const events: number[] = []
+  if (id) {
+    hours.forEach((atMs, i) => {
+      if (atMs < fromMs) return
+      for (let n = 0; n < (totalsByTagId[id][i] ?? 0); n += 1) events.push(atMs)
+    })
+  }
+  events.sort((a, b) => b - a)
+  const free = new Map<string, number>()
+  for (const atMs of events) {
+    free.set(vnDateOf(atMs), (free.get(vnDateOf(atMs)) ?? 0) + 1)
+  }
+  for (const date of recordDates) {
+    if (free.has(date)) free.set(date, free.get(date)! - 1)
+  }
+  return { events, free }
+}
+
+/** The earliest event whose day still has a close to find, or null. */
+function earliestOpenEvent(slots: ClosedSlots): number | null {
+  let earliest: number | null = null
+  for (const atMs of slots.events) {
+    if ((slots.free.get(vnDateOf(atMs)) ?? 0) > 0) earliest = atMs
+  }
+  return earliest
+}
+
+/**
+ * Dates a newly found close by Pancake's events: the latest one it can have
+ * been tagged at (not after its last update, not before it began, at most
+ * `MAX_MATCH_LAG` back) on a day that still has a close to find — and takes
+ * it. Null when none fits.
+ */
+function takeClosedDate(
+  slots: ClosedSlots,
+  conv: PancakeConversation
+): string | null {
+  for (const atMs of slots.events) {
+    if (atMs > conv.updatedAtMs) continue
+    if (
+      atMs + HOUR <= conv.insertedAtMs ||
+      atMs < conv.updatedAtMs - MAX_MATCH_LAG
+    ) {
+      break
+    }
+    const date = vnDateOf(atMs)
+    const left = slots.free.get(date) ?? 0
+    if (left > 0) {
+      slots.free.set(date, left - 1)
+      return date
+    }
+  }
+  return null
+}
+
 function sameList(a: unknown, b: string[]): boolean {
   return (
     Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i])
@@ -178,9 +266,13 @@ function sameList(a: unknown, b: string[]): boolean {
 
 /**
  * Until the baseline is done, each call advances it (see `continueBaseline`).
- * After that: walks the conversations touched in the last `sinceDays` days;
- * one with "Chốt sale" that is neither in the baseline nor recorded yet was
- * tagged since tracking started, so it becomes a record dated by its
+ * After that it first reads Pancake's Thẻ hội thoại: when "Chốt sale" was
+ * put on conversations, hour by hour (`closedSlots`). Then it walks the
+ * conversations touched in the last `sinceDays` days — further back when
+ * Pancake has a "Chốt sale" from the last `MATCH_DAYS` days that no record
+ * accounts for yet. One with "Chốt sale" that is neither in the baseline nor
+ * recorded yet was tagged since tracking started, so it becomes a record,
+ * dated by the Pancake event it matches (`takeClosedDate`), else by its
  * `updated_at` (a tag change bumps it; the 30-min cron sees it soon after).
  * Later runs only refresh a record's tags, name, auto-assigned staff and
  * whether "Chốt sale" is still on it — never the hand-entered fields.
@@ -200,9 +292,29 @@ export async function syncCskhCustomers({
   if (!state.baselineDone) return continueBaseline(state, tagsOf, deadlineMs)
 
   const now = Date.now()
+  const trackingSinceMs = state.trackingSinceMs ?? now
+
+  const matchFromMs = Math.max(trackingSinceMs, now - MATCH_DAYS * DAY)
+  let slots: ClosedSlots | null = null
+  try {
+    const dated = await col
+      .where("closedDate", ">=", vnDateOf(matchFromMs))
+      .get()
+    slots = await closedSlots(
+      matchFromMs,
+      now,
+      dated.docs
+        .map((doc) => doc.data())
+        .filter((data) => !data.legacy)
+        .map((data) => String(data.closedDate))
+    )
+  } catch {
+    // no Pancake events: walk the window, date closes by their last update
+  }
+  const openFromMs = slots ? earliestOpenEvent(slots) : null
   const walk = await fetchConversationsSince(
     CSKH_PAGE_ID,
-    [now - sinceDays * DAY],
+    [Math.min(now - sinceDays * DAY, openFromMs ?? Infinity)],
     { maxBatches: 400, deadlineMs }
   )
 
@@ -213,8 +325,8 @@ export async function syncCskhCustomers({
       baseline.add(id)
     }
   }
-  const trackingSinceMs = state.trackingSinceMs ?? now
 
+  // oldest update first, so each new close takes the event nearest its own
   const touched = walk.conversations
     .map((conv) => {
       const tags = tagsOf(conv.tagIds)
@@ -223,6 +335,7 @@ export async function syncCskhCustomers({
     .filter(
       (t) => known.has(t.conv.id) || (t.closed && !baseline.has(t.conv.id))
     )
+    .sort((a, b) => a.conv.updatedAtMs - b.conv.updatedAtMs)
 
   const knownRefs = touched
     .filter((t) => known.has(t.conv.id))
@@ -256,9 +369,11 @@ export async function syncCskhCustomers({
         customerName: conv.customerName,
         staffKey: staffKeyFromTags(tags),
         staffManual: false,
-        closedDate: vnDateOf(
-          Math.min(now, Math.max(conv.updatedAtMs, trackingSinceMs))
-        ),
+        closedDate:
+          (slots && takeClosedDate(slots, conv)) ??
+          vnDateOf(
+            Math.min(now, Math.max(conv.updatedAtMs, trackingSinceMs))
+          ),
         legacy: false,
         debtMonth: null,
         price: null,
@@ -391,10 +506,34 @@ export async function readCskhReport(dates: string[]): Promise<{
         state.baselineScanned ?? 0
       ).toLocaleString("vi-VN")} / khoảng 28.000 hội thoại). Bấm "Đồng bộ ngay" để quét tiếp — app bắt đầu ghi nhận khách chốt từ lúc xong bước này.`
     )
-  } else if (from < closedTrackedFrom) {
-    warnings.push(
-      `Trước ${closedTrackedFrom.split("-").reverse().join("/")}: khách chốt ở cột Tổng lấy theo số tag "Chốt sale" của Pancake. Pancake không lưu ngày gắn tag của từng khách, nên phần chia theo nhân viên, giá bản luận và AOV chỉ có từ ngày này (trước đó hiện "—").`
-    )
+  } else {
+    if (from < closedTrackedFrom) {
+      warnings.push(
+        `Trước ${formatDm(closedTrackedFrom)}: app chưa theo dõi từng khách chốt, nên chỉ cột Tổng có khách chốt (số tag "Chốt sale" của Pancake). Phần chia theo nhân viên, giá bản luận và AOV chỉ có từ ngày này (trước đó hiện "—").`
+      )
+    }
+    // the tracking start day's Pancake count includes the hours before it
+    const assigned: Record<string, number> = {}
+    for (const c of customers) {
+      if (c.legacy || c.tagRemoved || !c.staffKey) continue
+      assigned[c.closedDate] = (assigned[c.closedDate] ?? 0) + 1
+    }
+    const gaps = dates
+      .filter(
+        (date) =>
+          date > closedTrackedFrom &&
+          pancakeClosed[date] != null &&
+          pancakeClosed[date] !== (assigned[date] ?? 0)
+      )
+      .map(
+        (date) =>
+          `${formatDm(date)}: Pancake ${pancakeClosed[date]} · app ${assigned[date] ?? 0}`
+      )
+    if (gaps.length) {
+      warnings.push(
+        `Khách chốt theo tag "Chốt sale" của Pancake khác số khách app đã gán nhân viên — ${gaps.join("; ")}. Khách vừa gắn tag sẽ vào app ở lần đồng bộ tới; nếu vẫn lệch, xem lại ngày chốt của khách hoặc hội thoại có "Chốt sale" mà chưa có tag tên nhân viên.`
+      )
+    }
   }
 
   return {

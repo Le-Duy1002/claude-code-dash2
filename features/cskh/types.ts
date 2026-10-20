@@ -6,13 +6,15 @@
  *  - Khách xem (per staff) = Pancake's own daily count of that staff's name
  *    tag ("Duy" / "Kỳ" / "Thắng" / "Thương"): net gắn − gỡ, the same number
  *    Pancake's "Thẻ hội thoại" screen shows, so one day can be negative.
- *  - Khách chốt = a conversation carrying both "Chốt sale" and a staff name
- *    tag, counted for that staff. Pancake keeps no per-conversation tag
- *    history and old customers get re-touched constantly, so the sync first
- *    records every conversation that ALREADY has "Chốt sale" (the baseline,
- *    one walk of the whole page), and from then on dates each newly tagged
- *    one when it first sees it. Before `closedTrackedFrom` only Tổng has a
- *    khách chốt figure — Pancake's own daily "Chốt sale" count (Pancake
+ *  - Khách chốt comes from Pancake's Thẻ hội thoại (user, 20/10/2026): Tổng
+ *    is Pancake's own daily "Chốt sale" count, every day. Per staff it is a
+ *    conversation carrying both "Chốt sale" and that staff's name tag.
+ *    Pancake keeps no per-conversation tag history and old customers get
+ *    re-touched constantly, so the sync first records every conversation
+ *    that ALREADY has "Chốt sale" (the baseline, one walk of the whole
+ *    page); from then on it reads Pancake's hourly "Chốt sale" events, finds
+ *    the newly tagged conversations and dates each by the event it matches.
+ *    Before `closedTrackedFrom` only Tổng has a khách chốt figure (Pancake
  *    can't attribute it, so the staff split / giá / AOV show "—").
  *  - Giá bản luận and the payments are entered by hand per closed customer;
  *    each payment carries its own date and "Đã trả" sums payments by it.
@@ -125,7 +127,7 @@ export type CskhReport = {
   customers: CskhCustomer[]
   /** first day khách chốt is tracked (`YYYY-MM-DD`), null until the baseline is done */
   closedTrackedFrom: string | null
-  /** date -> Pancake's own net "Chốt sale" count — Tổng khách chốt before tracking */
+  /** date -> Pancake's own net "Chốt sale" count — Tổng's khách chốt */
   pancakeClosed: Record<string, number>
   lastSyncedAtMs: number | null
   warnings: string[]
@@ -319,8 +321,8 @@ export type CskhMetrics = {
   /** khách xem on the days whose khách chốt is known — what tỉ lệ chốt divides by */
   viewedForRate: number
   /**
-   * khách chốt: from tracked records — or, for Tổng on a day before
-   * tracking, Pancake's own daily "Chốt sale" count
+   * khách chốt: from tracked records — for Tổng, Pancake's own daily
+   * "Chốt sale" count when it has one
    */
   closed: number
   /** khách chốt from tracked records only — what AOV divides by */
@@ -371,9 +373,10 @@ export function closeRate(m: CskhMetrics): number | null {
 export type CskhDaily = Map<string, Record<string, CskhMetrics>>
 
 /**
- * Per-day metrics for every group over `report.dates`. On a day before
- * tracking only Tổng has a khách chốt figure (Pancake's "Chốt sale" count);
- * the staff split, giá bản luận and AOV start with tracking.
+ * Per-day metrics for every group over `report.dates`. Tổng's khách chốt is
+ * Pancake's "Chốt sale" count whenever Pancake has one (the records' sum
+ * otherwise); before tracking it is the only khách chốt figure — the staff
+ * split, giá bản luận and AOV start with tracking.
  */
 export function dailyMetrics(report: CskhReport): CskhDaily {
   const out: CskhDaily = new Map()
@@ -390,7 +393,7 @@ export function dailyMetrics(report: CskhReport): CskhDaily {
       row[CSKH_TOTAL].viewed += v
     }
     const pancakeClosed = report.pancakeClosed[date]
-    if (!tracked && pancakeClosed != null) {
+    if (pancakeClosed != null) {
       row[CSKH_TOTAL].closed = pancakeClosed
       row[CSKH_TOTAL].closedKnown = true
     }
@@ -399,15 +402,16 @@ export function dailyMetrics(report: CskhReport): CskhDaily {
     }
     out.set(date, row)
   }
-  // a customer with no staff (no name tag, none picked) counts nowhere — from
-  // tracking on, the total is exactly the sum of the staff columns
+  // a customer with no staff (no name tag, none picked) counts in no staff
+  // column — and in Tổng's khách chốt only through Pancake's count
   const groupsOf = (c: CskhCustomer) =>
     c.staffKey && STAFF_NAME.has(c.staffKey) ? [CSKH_TOTAL, c.staffKey] : []
   for (const c of report.customers) {
     const closedRow = out.get(c.closedDate)
     if (closedRow && !c.tagRemoved && closedRow[CSKH_TOTAL].tracked) {
+      const pancakeCounted = report.pancakeClosed[c.closedDate] != null
       for (const g of groupsOf(c)) {
-        closedRow[g].closed += 1
+        if (g !== CSKH_TOTAL || !pancakeCounted) closedRow[g].closed += 1
         closedRow[g].closedTracked += 1
         closedRow[g].price += c.price ?? 0
       }

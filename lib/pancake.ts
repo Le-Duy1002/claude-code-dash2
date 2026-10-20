@@ -653,6 +653,59 @@ export async function fetchWebPageStatistics(
   })
 }
 
+type TagStatsResponse = {
+  data?: {
+    categories?: string[]
+    /** `total` = net (gắn − gỡ), `pin` = times the tag was put on */
+    series?: Record<string, { total?: number; pin?: number }[]>
+  }
+  success?: boolean
+  message?: string
+  tags_list?: Record<string, { text?: string }>
+}
+
+/** One `pancake.vn/api/v1/statistics/tags` call for a single page. */
+async function postTagStatistics(
+  fbPageId: string,
+  fromISO: string,
+  toISO: string,
+  statisticType: "day" | "hour"
+): Promise<TagStatsResponse> {
+  const dateRange = `${toPancakeDate(fromISO)} 00:00:00 - ${toPancakeDate(toISO)} 23:59:59`
+  const url = new URL("https://pancake.vn/api/v1/statistics/tags")
+  url.searchParams.set("date_range", dateRange)
+  url.searchParams.set("statistic_type", statisticType)
+  url.searchParams.set("access_token", INBOX_TOKEN)
+
+  const boundary = "----pancakeDashTagStats"
+  const body = `--${boundary}\r\nContent-Disposition: form-data; name="page_ids"\r\n\r\n${fbPageId}\r\n--${boundary}--\r\n`
+
+  const res = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": `multipart/form-data; boundary=${boundary}`,
+    },
+    body,
+    cache: "no-store",
+  })
+  const json = (await res.json().catch(() => null)) as TagStatsResponse | null
+  if (!res.ok || !json?.success) {
+    throw new Error(
+      `Pancake ${res.status} pancake.vn/statistics/tags — ${json?.message ?? "lỗi không rõ"}`
+    )
+  }
+  return json
+}
+
+/** A tag's rows in `series` — see the note in `fetchWebTagStatistics`. */
+function tagSeriesRows(
+  series: NonNullable<TagStatsResponse["data"]>["series"],
+  id: string
+): { total?: number; pin?: number }[] {
+  return series?.[`tag_${id}`] ?? series?.[id] ?? []
+}
+
 /**
  * Per-tag, per-day counts from Pancake's own "Thẻ hội thoại" analytics
  * (`pancake.vn/api/v1/statistics/tags` — found via the user's DevTools,
@@ -688,35 +741,7 @@ export async function fetchWebTagStatistics(
   /** tag id -> tag text as Pancake shows it (trimmed, original case) */
   tagLabel: Record<string, string>
 }> {
-  const dateRange = `${toPancakeDate(fromISO)} 00:00:00 - ${toPancakeDate(toISO)} 23:59:59`
-  const url = new URL("https://pancake.vn/api/v1/statistics/tags")
-  url.searchParams.set("date_range", dateRange)
-  url.searchParams.set("statistic_type", "day")
-  url.searchParams.set("access_token", INBOX_TOKEN)
-
-  const boundary = "----pancakeDashTagStats"
-  const body = `--${boundary}\r\nContent-Disposition: form-data; name="page_ids"\r\n\r\n${fbPageId}\r\n--${boundary}--\r\n`
-
-  const res = await fetch(url.toString(), {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      "content-type": `multipart/form-data; boundary=${boundary}`,
-    },
-    body,
-    cache: "no-store",
-  })
-  const json = (await res.json().catch(() => null)) as {
-    data?: { categories?: string[]; series?: Record<string, { total?: number }[]> }
-    success?: boolean
-    message?: string
-    tags_list?: Record<string, { text?: string }>
-  } | null
-  if (!res.ok || !json?.success) {
-    throw new Error(
-      `Pancake ${res.status} pancake.vn/statistics/tags — ${json?.message ?? "lỗi không rõ"}`
-    )
-  }
+  const json = await postTagStatistics(fbPageId, fromISO, toISO, "day")
 
   const n = json.data?.categories?.length ?? 0
   const dates: string[] = []
@@ -744,11 +769,57 @@ export async function fetchWebTagStatistics(
     // single-page calls key the real (nonzero) series under "tag_<id>"; the
     // plain "<id>" key exists too but is always zero — not documented
     // anywhere, just observed, so fall back to it defensively.
-    const rows = series[`tag_${id}`] ?? series[id] ?? []
+    const rows = tagSeriesRows(series, id)
     totalsByTagId[id] = dates.map((_, i) => Number(rows[i]?.total ?? 0))
   }
 
   return { dates, totalsByTagId, tagText, tagLabel }
+}
+
+/**
+ * `fetchWebTagStatistics` hour by hour (`statistic_type=hour`): one entry
+ * per Vietnam clock hour that had any tag event on the page — quiet hours
+ * are left out — with each tag's net count for that hour. The hours add up
+ * to the daily figures exactly (checked 13–20/10/2026 on Hẻm Trong Đường),
+ * and a tag being put on bumps the conversation's `updated_at`, so an
+ * hour here bounds when the tagged conversation was last touched.
+ */
+export async function fetchWebTagHourly(
+  fbPageId: string,
+  fromISO: string,
+  toISO: string
+): Promise<{
+  /** epoch ms of each listed hour's start, oldest first */
+  hours: number[]
+  /** tag id -> net count per hour (same order as `hours`) */
+  totalsByTagId: Record<string, number[]>
+  /** tag id -> tag text, lowercased + trimmed */
+  tagText: Record<string, string>
+}> {
+  const json = await postTagStatistics(fbPageId, fromISO, toISO, "hour")
+
+  // "HH:00 DD/MM/YYYY", Vietnam time
+  const index: number[] = []
+  const hours: number[] = []
+  ;(json.data?.categories ?? []).forEach((label, i) => {
+    const m = /^(\d{2}):(\d{2}) (\d{2})\/(\d{2})\/(\d{4})$/.exec(label.trim())
+    if (!m) return
+    const [, hh, mm, d, mo, y] = m.map(Number)
+    index.push(i)
+    hours.push(Date.UTC(y, mo - 1, d, hh, mm) - 7 * 3_600_000)
+  })
+
+  const series = json.data?.series ?? {}
+  const totalsByTagId: Record<string, number[]> = {}
+  const tagText: Record<string, string> = {}
+  for (const [id, info] of Object.entries(json.tags_list ?? {})) {
+    if (!info.text) continue
+    tagText[id] = info.text.trim().toLowerCase()
+    const rows = tagSeriesRows(series, id)
+    totalsByTagId[id] = index.map((i) => Number(rows[i]?.total ?? 0))
+  }
+
+  return { hours, totalsByTagId, tagText }
 }
 
 // ---------------------------------------------------------- INBOX: messages
