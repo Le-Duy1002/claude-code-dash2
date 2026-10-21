@@ -46,7 +46,7 @@ import {
   daysUntil,
   formatDate,
   isProjectOverdue,
-  projectLabel,
+  projectOptions,
   projectProgress,
   staffName,
   subProjectsOf,
@@ -171,12 +171,16 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     () => subProjectsOf(allProjects, projectId),
     [allProjects, projectId]
   )
-  const reportTargets = project
-    ? [...subProjects, project].map((p) => ({
-        id: p.id,
-        label: projectLabel(p, allProjects),
-      }))
-    : []
+  // this project's family: itself, its big project and its sub-projects
+  const reportTargets = React.useMemo(() => {
+    const family = new Set([projectId])
+    if (project?.parentId) family.add(project.parentId)
+    return projectOptions(allProjects).filter(
+      (o) => family.has(o.id) || (o.parentId != null && family.has(o.parentId))
+    )
+  }, [allProjects, projectId, project?.parentId])
+  // a big project saves into its first sub-project by default
+  const defaultReportTarget = subProjects[0]?.id ?? projectId
 
   const visible = React.useMemo(() => {
     let out = tasks
@@ -290,7 +294,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               <DriveCheckDialog projectId={projectId} />
               <ExportReportDialog
                 targets={reportTargets}
-                defaultTargetId={reportTargets[0]?.id}
+                defaultTargetId={defaultReportTarget}
               />
             </div>
           </div>

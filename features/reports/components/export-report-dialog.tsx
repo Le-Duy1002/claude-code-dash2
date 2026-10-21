@@ -37,8 +37,15 @@ import {
   type ReportKind,
 } from "../types"
 
-/** A project a report can be saved into. */
-export type ReportTarget = { id: string; label: string }
+/**
+ * A project a report can be saved into. `parentId` names its big project
+ * when that one is in the list too — the dialog then offers it under
+ * "Dự án con" once the big project is picked.
+ */
+export type ReportTarget = { id: string; label: string; parentId: string | null }
+
+/** "Dự án con" value meaning "save into the big project itself". */
+const NO_SUB = "__none__"
 
 const todayVn = () =>
   new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)
@@ -96,11 +103,12 @@ function SimpleSelect({
 }
 
 /**
- * "Xuất báo cáo": pick a report template, a date range and the project (or
- * sub-project) to save into — the server builds the file from live data and
- * puts it into that project's Drive folder as a Google Sheet. Each open
- * starts from `initialRange` (the page's own filter, when it has one) and
- * the project last exported into.
+ * "Xuất báo cáo": pick a report template, a date range, then where to save —
+ * a big project and, inside it, one of its sub-projects (or the big project
+ * itself). The server builds the file from live data and puts it into that
+ * project's Drive folder as a Google Sheet. Each open starts from
+ * `initialRange` (the page's own filter, when it has one) and the project
+ * last exported into.
  */
 export function ExportReportDialog({
   targets,
@@ -114,12 +122,36 @@ export function ExportReportDialog({
   const [open, setOpen] = React.useState(false)
   const [kind, setKind] = React.useState<ReportKind>(REPORT_KINDS[0].value)
   const [range, setRange] = React.useState(() => defaultReportRange(todayVn()))
-  const [targetId, setTargetId] = React.useState(
-    defaultTargetId ?? targets[0]?.id ?? ""
-  )
+  const [projectId, setProjectId] = React.useState("")
+  const [subId, setSubId] = React.useState(NO_SUB)
   const [pending, setPending] = React.useState(false)
 
-  const target = targets.find((t) => t.id === targetId) ?? targets[0]
+  const tops = targets.filter(
+    (t) => !t.parentId || !targets.some((x) => x.id === t.parentId)
+  )
+  const top = tops.find((t) => t.id === projectId) ?? tops[0]
+  const subs = top ? targets.filter((t) => t.parentId === top.id) : []
+  const sub = subs.find((t) => t.id === subId) ?? null
+  const target = sub ?? top
+  const targetPath = sub && top ? `${top.label} › ${sub.label}` : top?.label
+
+  /** Selects `id` — a big project, or a sub-project together with its parent. */
+  function pick(id: string | null | undefined) {
+    const t = targets.find((x) => x.id === id)
+    if (t?.parentId && targets.some((x) => x.id === t.parentId)) {
+      setProjectId(t.parentId)
+      setSubId(t.id)
+    } else {
+      setProjectId(t?.id ?? tops[0]?.id ?? "")
+      setSubId(NO_SUB)
+    }
+  }
+
+  function changeProject(id: string) {
+    setProjectId(id)
+    setSubId(targets.find((t) => t.parentId === id)?.id ?? NO_SUB)
+  }
+
   const rangeError = reportRangeError(range.from, range.to, todayVn())
   const kindInfo = REPORT_KINDS.find((k) => k.value === kind)!
 
@@ -129,7 +161,7 @@ export function ExportReportDialog({
     try {
       const result = await exportReport(target.id, { kind, ...range })
       rememberTarget(target.id)
-      toast.success(`Đã lưu "${result.name}" vào ${target.label}.`, {
+      toast.success(`Đã lưu "${result.name}" vào ${targetPath}.`, {
         description: result.warnings.length
           ? result.warnings.join(" ")
           : undefined,
@@ -155,10 +187,10 @@ export function ExportReportDialog({
         // targets and the page's range can change after mount — pick on each open
         if (next) {
           const last = lastTarget()
-          setTargetId(
+          pick(
             last && targets.some((t) => t.id === last)
               ? last
-              : (defaultTargetId ?? targets[0]?.id ?? "")
+              : (defaultTargetId ?? targets[0]?.id)
           )
           setRange(
             initialRange
@@ -215,25 +247,58 @@ export function ExportReportDialog({
             </div>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="report-target">Lưu vào dự án</Label>
-            {targets.length ? (
-              <SimpleSelect
-                id="report-target"
-                value={target?.id ?? ""}
-                onChange={setTargetId}
-                items={targets.map((t) => ({ value: t.id, label: t.label }))}
-              />
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Chưa có dự án nào —{" "}
-                <Link href="/du-an" className="underline hover:text-foreground">
-                  tạo dự án / dự án con
-                </Link>{" "}
-                trước để có chỗ lưu báo cáo.
+          {top ? (
+            <div className="flex flex-col gap-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="report-project">Lưu vào dự án</Label>
+                  <SimpleSelect
+                    id="report-project"
+                    value={top.id}
+                    onChange={changeProject}
+                    items={tops.map((t) => ({ value: t.id, label: t.label }))}
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="report-sub">Dự án con</Label>
+                  <SimpleSelect
+                    id="report-sub"
+                    value={sub?.id ?? NO_SUB}
+                    onChange={setSubId}
+                    items={[
+                      { value: NO_SUB, label: "Không — lưu vào dự án lớn" },
+                      ...subs.map((t) => ({ value: t.id, label: t.label })),
+                    ]}
+                  />
+                </div>
+              </div>
+              <p className="text-sm">
+                Sẽ lưu vào:{" "}
+                <span className="font-medium">{targetPath}</span>
+                {subs.length === 0 ? (
+                  <span className="text-xs text-muted-foreground">
+                    {" "}
+                    (dự án này chưa có dự án con —{" "}
+                    <Link
+                      href={`/du-an/${top.id}`}
+                      className="underline hover:text-foreground"
+                    >
+                      tạo dự án con
+                    </Link>
+                    )
+                  </span>
+                ) : null}
               </p>
-            )}
-          </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Chưa có dự án nào —{" "}
+              <Link href="/du-an" className="underline hover:text-foreground">
+                tạo dự án / dự án con
+              </Link>{" "}
+              trước để có chỗ lưu báo cáo.
+            </p>
+          )}
 
           {rangeError ? (
             <p className="text-sm text-destructive">{rangeError}</p>

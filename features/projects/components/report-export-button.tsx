@@ -9,9 +9,9 @@ import { subscribeToProjects } from "../services/projects-service"
 import { projectOptions, type Project } from "../types"
 
 /**
- * "Xuất báo cáo" for pages outside a project (e.g. Chỉ số): the save-to list
- * holds every big project followed by its sub-projects; a sub-project is the
- * default when there is one.
+ * "Xuất báo cáo" for pages outside a project (e.g. Chỉ số): choose any big
+ * project, then one of its sub-projects or the big project itself; a
+ * sub-project is the default when there is one.
  */
 export function ReportExportButton({
   initialRange,
@@ -31,7 +31,7 @@ export function ReportExportButton({
   return (
     <ExportReportDialog
       targets={options}
-      defaultTargetId={(options.find((o) => o.isSub) ?? options[0])?.id}
+      defaultTargetId={(options.find((o) => o.parentId) ?? options[0])?.id}
       initialRange={initialRange}
     />
   )

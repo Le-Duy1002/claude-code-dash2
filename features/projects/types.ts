@@ -136,34 +136,25 @@ export function subProjectsOf(projects: Project[], parentId: string): Project[] 
     .sort((a, b) => a.code.localeCompare(b.code))
 }
 
-/** Tên hiển thị khi chọn nơi lưu: dự án con kèm tên dự án lớn của nó. */
-export function projectLabel(project: Project, projects: Project[]): string {
-  const parent = project.parentId
-    ? projects.find((p) => p.id === project.parentId)
-    : null
-  return parent
-    ? `${parent.name} › ${project.code} ${project.name}`
-    : `${project.code} ${project.name}`
-}
-
 /**
  * Mọi dự án chưa lưu trữ để chọn nơi lưu báo cáo: từng dự án lớn (theo mã)
- * rồi ngay sau là các dự án con của nó.
+ * rồi ngay sau là các dự án con của nó (`parentId` trỏ về dự án lớn).
  */
 export function projectOptions(
   projects: Project[]
-): { id: string; label: string; isSub: boolean }[] {
+): { id: string; label: string; parentId: string | null }[] {
   const live = projects.filter((p) => p.status !== "archived")
   const tops = live
     .filter((p) => !p.parentId || !live.some((x) => x.id === p.parentId))
     .sort((a, b) => a.code.localeCompare(b.code))
+  const option = (p: Project, parentId: string | null) => ({
+    id: p.id,
+    label: `${p.code} ${p.name}`,
+    parentId,
+  })
   return tops.flatMap((top) => [
-    { id: top.id, label: projectLabel(top, projects), isSub: false },
-    ...subProjectsOf(live, top.id).map((child) => ({
-      id: child.id,
-      label: projectLabel(child, projects),
-      isSub: true,
-    })),
+    option(top, null),
+    ...subProjectsOf(live, top.id).map((child) => option(child, top.id)),
   ])
 }
 
