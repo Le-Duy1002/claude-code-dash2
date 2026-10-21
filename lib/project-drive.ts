@@ -407,8 +407,13 @@ const watchDoc = () =>
 
 /** Requested channel lifetime — Drive may grant less; see `watchChanges`. */
 const REQUEST_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000
-/** ms before expiry at which the renewal cron re-registers a channel. */
-const RENEW_MARGIN_MS = 20 * 60 * 1000
+/**
+ * ms before expiry at which the renewal cron re-registers a channel. The
+ * renew workflow runs every 12 h and GitHub starts scheduled runs hours late
+ * (the 12-min sync ran every 3–4 h, 20–21/10/2026), so a 20-min margin was
+ * almost always missed and the channel lapsed until the next run.
+ */
+const RENEW_MARGIN_MS = 36 * 60 * 60 * 1000
 /** ignore webhook pings that land within this window of the last sync. */
 export const WEBHOOK_DEBOUNCE_MS = 20 * 1000
 
