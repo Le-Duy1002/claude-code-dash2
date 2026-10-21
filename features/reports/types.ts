@@ -112,6 +112,24 @@ export function defaultReportRange(todayIso: string): {
   return { from: addDays(to, -13), to }
 }
 
+/**
+ * `[from, to]` made exportable: not past today, and at most the last
+ * `REPORT_MAX_DAYS` of it — so a page's "Tháng này" / "30 ngày" filter can
+ * prefill the export. Falls back to `defaultReportRange` when nothing is left.
+ */
+export function clampReportRange(
+  from: string,
+  to: string,
+  todayIso: string
+): { from: string; to: string } {
+  const end = to < todayIso ? to : todayIso
+  const earliest = addDays(end, -(REPORT_MAX_DAYS - 1))
+  const start = from > earliest ? from : earliest
+  return ISO_DATE.test(start) && start <= end
+    ? { from: start, to: end }
+    : defaultReportRange(todayIso)
+}
+
 /** Why `[from, to]` can't be exported, or null when it can. */
 export function reportRangeError(
   from: string,

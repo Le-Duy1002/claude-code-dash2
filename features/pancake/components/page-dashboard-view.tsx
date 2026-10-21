@@ -20,6 +20,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { CskhSection, syncCskh } from "@/features/cskh"
+import { ReportExportButton } from "@/features/projects"
 
 import {
   autoSyncedRecently,
@@ -233,6 +234,18 @@ export function PageDashboardView() {
   const visiblePageIds =
     pageFilter === "all" ? pages.map((p) => p.id) : [pageFilter]
 
+  // "Xuất báo cáo" starts from the range being viewed
+  const exportRange = React.useMemo(() => {
+    const { fromMs, toMs } = resolveReportRange(
+      dateRange.range,
+      dateRange.from,
+      dateRange.to
+    )
+    const iso = (ms: number) =>
+      new Date(ms + 7 * 3_600_000).toISOString().slice(0, 10)
+    return { from: iso(fromMs), to: iso(Math.min(toMs, Date.now()) - 1) }
+  }, [dateRange])
+
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -264,6 +277,7 @@ export function PageDashboardView() {
             />
             {syncing ?? "Đồng bộ ngay"}
           </Button>
+          <ReportExportButton initialRange={exportRange} />
         </div>
       </div>
 

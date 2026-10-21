@@ -19,6 +19,7 @@ export {
   ensureProjectFolder,
 } from "./services/project-folder-service"
 export { DriveCheckDialog } from "./components/drive-check-dialog"
+export { ReportExportButton } from "./components/report-export-button"
 export { SubProjectList } from "./components/sub-project-list"
 export {
   addProjectTaskComment,

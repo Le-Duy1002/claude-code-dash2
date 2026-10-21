@@ -46,6 +46,7 @@ import {
   daysUntil,
   formatDate,
   isProjectOverdue,
+  projectLabel,
   projectProgress,
   staffName,
   subProjectsOf,
@@ -173,7 +174,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const reportTargets = project
     ? [...subProjects, project].map((p) => ({
         id: p.id,
-        label: `${p.code} ${p.name}`,
+        label: projectLabel(p, allProjects),
       }))
     : []
 
