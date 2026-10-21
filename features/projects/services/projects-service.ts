@@ -13,6 +13,7 @@ import { db } from "@/lib/firebase"
 
 import {
   nextProjectCode,
+  nextSubProjectCode,
   type Project,
   type ProjectInput,
   type ProjectStatus,
@@ -36,6 +37,7 @@ function mapProject(id: string, data: Record<string, unknown>): Project {
       ? (data.ownerKeys as string[])
       : [],
     status: (data.status as ProjectStatus) ?? "active",
+    parentId: (data.parentId as string) ?? null,
     driveFolderId: (data.driveFolderId as string) ?? null,
     driveFolderUrl: (data.driveFolderUrl as string) ?? null,
     driveFolderPending: Boolean(data.driveFolderPending),
@@ -75,13 +77,15 @@ export function subscribeToProject(
 }
 
 /**
- * Tạo dự án. `existing` dùng để sinh mã kế tiếp. Thư mục tài liệu Drive để
- * `driveFolderPending = true` — đợt tài liệu sẽ khởi tạo và gỡ cờ này.
+ * Tạo dự án — hoặc dự án con khi có `parent`. `existing` dùng để sinh mã kế
+ * tiếp. Thư mục tài liệu Drive để `driveFolderPending = true` — đợt tài liệu
+ * sẽ khởi tạo và gỡ cờ này.
  */
 export async function createProject(
   input: ProjectInput,
   createdByUid: string,
-  existing: Project[]
+  existing: Project[],
+  parent: Project | null = null
 ): Promise<string> {
   const ref = await addDoc(projectsCollection, {
     name: input.name.trim(),
@@ -89,7 +93,10 @@ export async function createProject(
     startDate: input.startDate,
     endDate: input.endDate,
     ownerKeys: input.ownerKeys,
-    code: nextProjectCode(existing),
+    code: parent
+      ? nextSubProjectCode(parent, existing)
+      : nextProjectCode(existing),
+    parentId: parent?.id ?? null,
     status: "active" satisfies ProjectStatus,
     driveFolderId: null,
     driveFolderPending: true,

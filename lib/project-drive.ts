@@ -4,14 +4,24 @@ import { randomUUID } from "node:crypto"
 
 import { FieldValue } from "firebase-admin/firestore"
 
+import type { DriveCheck, ProjectDriveCheck } from "@/features/projects/types"
+
 import { adminDb } from "./firebase-admin"
 import {
+  GOOGLE_SHEET_MIME,
   createProjectFolder,
   createProjectSubfolder,
+  deleteProjectFile,
   getChangesStartPageToken,
+  getProjectFolder,
   listFolderTree,
+  projectsWriteAccount,
+  readerCanSee,
+  readerEmail,
+  shareWithReader,
   stopChannel,
   uploadFileToProjectFolder,
+  uploadSpreadsheetToProjectFolder,
   watchChanges,
 } from "./google-drive"
 
@@ -28,7 +38,8 @@ class HttpError extends Error {
 
 /**
  * Returns the project's Drive folder, creating it on first call. Shared by the
- * folder / upload / sync routes so folder creation lives in one place.
+ * folder / upload / sync routes so folder creation lives in one place. A
+ * sub-project (`parentId`) gets its folder inside its parent project's.
  */
 export async function ensureProjectDriveFolder(
   projectId: string
@@ -50,7 +61,13 @@ export async function ensureProjectDriveFolder(
     }
   }
 
-  const folder = await createProjectFolder(displayName)
+  const parentId = (data.parentId as string | null) ?? null
+  const folder = parentId
+    ? await createProjectSubfolder(
+        (await ensureProjectDriveFolder(parentId)).id,
+        displayName
+      )
+    : await createProjectFolder(displayName)
   await ref.update({
     driveFolderId: folder.id,
     driveFolderUrl: folder.webViewLink,
@@ -128,6 +145,162 @@ export async function createProjectItem(
     updatedAt: FieldValue.serverTimestamp(),
   })
   return { id: drive.id }
+}
+
+/**
+ * "Kiểm tra Drive": can the app really write into this project's folder?
+ * Checks the write account, that the folder still exists, writes and deletes
+ * a test file, and that the mirror's service account can read the folder.
+ * With `repair`, a deleted folder is replaced by a new one and a folder the
+ * service account can't read is shared with it.
+ */
+export async function checkProjectDrive(
+  projectId: string,
+  { repair = false }: { repair?: boolean } = {}
+): Promise<ProjectDriveCheck> {
+  const ref = adminDb().collection("projects").doc(projectId)
+  const snap = await ref.get()
+  if (!snap.exists) throw new HttpError("Không tìm thấy dự án", 404)
+  const checks: DriveCheck[] = []
+  let repairable = false
+  const done = (folderId: string | null, folderUrl: string | null) => ({
+    ok: checks.every((c) => c.ok),
+    folderId,
+    folderUrl,
+    checks,
+    repairable,
+  })
+
+  try {
+    const email = await projectsWriteAccount()
+    checks.push({ key: "account", label: "Tài khoản Google ghi file", ok: true, detail: email })
+  } catch (error) {
+    checks.push({
+      key: "account",
+      label: "Tài khoản Google ghi file",
+      ok: false,
+      detail: `Không đăng nhập được Google (${(error as Error).message}). Cần cấp quyền lại bằng scripts/get-refresh-token.mjs rồi cập nhật GOOGLE_OAUTH_PROJECTS_REFRESH_TOKEN.`,
+    })
+    return done(null, null)
+  }
+
+  // the folder: still there for the write account?
+  let folderId = (snap.get("driveFolderId") as string | null) ?? null
+  let folderUrl = (snap.get("driveFolderUrl") as string | null) ?? null
+  const current = folderId ? await getProjectFolder(folderId) : null
+  if (current && !current.trashed) {
+    checks.push({ key: "folder", label: "Thư mục dự án trên Drive", ok: true, detail: current.name })
+  } else if (repair) {
+    await ref.update({
+      driveFolderId: null,
+      driveFolderUrl: null,
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+    const created = await ensureProjectDriveFolder(projectId)
+    folderId = created.id
+    folderUrl = created.url
+    checks.push({
+      key: "folder",
+      label: "Thư mục dự án trên Drive",
+      ok: true,
+      detail: `Đã tạo thư mục mới "${created.name}".`,
+    })
+  } else {
+    repairable = true
+    checks.push({
+      key: "folder",
+      label: "Thư mục dự án trên Drive",
+      ok: false,
+      detail: !folderId
+        ? "Dự án chưa có thư mục Drive."
+        : current?.trashed
+          ? "Thư mục đang nằm trong thùng rác Drive."
+          : "Thư mục không còn trên Drive (đã bị xoá hoặc không thuộc tài khoản ghi file).",
+    })
+    return done(folderId, folderUrl)
+  }
+
+  // write + delete a test file
+  try {
+    const test = await uploadFileToProjectFolder({
+      folderId: folderId!,
+      name: "Kiểm tra kết nối (tự xoá).txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from(`Kiểm tra lúc ${new Date().toISOString()}`),
+    })
+    await deleteProjectFile(test.id)
+    checks.push({ key: "write", label: "Ghi file vào thư mục", ok: true, detail: "Ghi và xoá thử một tệp thành công." })
+  } catch (error) {
+    checks.push({
+      key: "write",
+      label: "Ghi file vào thư mục",
+      ok: false,
+      detail: `Không ghi được: ${(error as Error).message}`,
+    })
+  }
+
+  // the mirror (Đồng bộ Drive / Tài liệu) reads as the service account
+  let visible = await readerCanSee(folderId!)
+  if (!visible && repair) {
+    await shareWithReader(folderId!)
+    visible = await readerCanSee(folderId!)
+  }
+  if (!visible) repairable = true
+  checks.push({
+    key: "mirror",
+    label: "App đọc được để đồng bộ tài liệu",
+    ok: visible,
+    detail: visible
+      ? readerEmail()
+      : `Thư mục chưa chia sẻ cho ${readerEmail()}.`,
+  })
+
+  return done(folderId, folderUrl)
+}
+
+/**
+ * Saves an exported report (.xlsx) into the project's Drive folder as a
+ * Google Sheet and records it in the project's document mirror right away.
+ */
+export async function saveProjectReport(
+  projectId: string,
+  report: {
+    name: string
+    buffer: Buffer
+    kind: string
+    from: string
+    to: string
+  },
+  actorName: string
+): Promise<{ id: string; name: string; webViewLink: string }> {
+  const folder = await ensureProjectDriveFolder(projectId)
+  const file = await uploadSpreadsheetToProjectFolder({
+    folderId: folder.id,
+    name: report.name,
+    buffer: report.buffer,
+  })
+  await adminDb()
+    .collection("projects")
+    .doc(projectId)
+    .collection("documents")
+    .doc(file.id)
+    .set({
+      name: file.name,
+      fileName: file.name,
+      size: file.size,
+      contentType: GOOGLE_SHEET_MIME,
+      driveFileId: file.id,
+      webViewLink: file.webViewLink,
+      driveModifiedTime: file.modifiedTime,
+      parentId: "",
+      isFolder: false,
+      uploadedByName: actorName,
+      source: "web",
+      report: { kind: report.kind, from: report.from, to: report.to },
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+  return { id: file.id, name: file.name, webViewLink: file.webViewLink }
 }
 
 export type SyncResult = {

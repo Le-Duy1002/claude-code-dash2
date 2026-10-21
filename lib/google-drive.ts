@@ -166,6 +166,96 @@ export async function uploadFileToProjectFolder(params: {
   return mapFile(response.data)
 }
 
+const XLSX_MIME =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+export const GOOGLE_SHEET_MIME = "application/vnd.google-apps.spreadsheet"
+
+/**
+ * Uploads an .xlsx into a project folder as a native Google Sheet — Drive
+ * converts it on upload, keeping sheets, number formats, fills and borders.
+ */
+export async function uploadSpreadsheetToProjectFolder(params: {
+  folderId: string
+  name: string
+  buffer: Buffer
+}): Promise<DriveFile> {
+  const drive = projectsWriteClient()
+  const response = await drive.files.create({
+    requestBody: {
+      name: params.name,
+      parents: [params.folderId],
+      mimeType: GOOGLE_SHEET_MIME,
+    },
+    media: { mimeType: XLSX_MIME, body: Readable.from(params.buffer) },
+    fields: DRIVE_FIELDS,
+  })
+  return mapFile(response.data)
+}
+
+/** The Google account the "Dự án" writes run as. */
+export async function projectsWriteAccount(): Promise<string> {
+  const drive = projectsWriteClient()
+  const res = await drive.about.get({ fields: "user(emailAddress)" })
+  return res.data.user?.emailAddress ?? ""
+}
+
+/**
+ * A project folder as the projects write account sees it, or null when Drive
+ * no longer has it for that account (deleted, or never this app's).
+ */
+export async function getProjectFolder(folderId: string): Promise<{
+  id: string
+  name: string
+  trashed: boolean
+  webViewLink: string
+} | null> {
+  const drive = projectsWriteClient()
+  try {
+    const res = await drive.files.get({
+      fileId: folderId,
+      fields: "id, name, trashed, webViewLink",
+    })
+    return {
+      id: res.data.id ?? folderId,
+      name: res.data.name ?? "",
+      trashed: Boolean(res.data.trashed),
+      webViewLink: res.data.webViewLink ?? "",
+    }
+  } catch (error) {
+    if ((error as { code?: number }).code === 404) return null
+    throw error
+  }
+}
+
+/** The service account the document mirror reads with. */
+export function readerEmail(): string {
+  return (
+    process.env.GOOGLE_DRIVE_CLIENT_EMAIL ??
+    process.env.FIREBASE_ADMIN_CLIENT_EMAIL ??
+    ""
+  )
+}
+
+/** Whether the mirror's service account can read `fileId`. */
+export async function readerCanSee(fileId: string): Promise<boolean> {
+  try {
+    await readClient().files.get({ fileId, fields: "id", supportsAllDrives: true })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Shares a project folder with the mirror's service account (Viewer). */
+export async function shareWithReader(fileId: string): Promise<void> {
+  const drive = projectsWriteClient()
+  await drive.permissions.create({
+    fileId,
+    sendNotificationEmail: false,
+    requestBody: { type: "user", role: "reader", emailAddress: readerEmail() },
+  })
+}
+
 /** Renames a file in a project folder. */
 export async function renameProjectFile(
   fileId: string,

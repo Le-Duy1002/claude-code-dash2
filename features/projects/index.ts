@@ -14,7 +14,12 @@ export {
   subscribeToProjects,
   updateProject,
 } from "./services/projects-service"
-export { ensureProjectFolder } from "./services/project-folder-service"
+export {
+  checkProjectDrive,
+  ensureProjectFolder,
+} from "./services/project-folder-service"
+export { DriveCheckDialog } from "./components/drive-check-dialog"
+export { SubProjectList } from "./components/sub-project-list"
 export {
   addProjectTaskComment,
   deleteProjectTaskCommentThread,

@@ -83,8 +83,21 @@ export function ProjectList() {
     return map
   }, [tasks])
 
+  // sub-projects live on their big project's page
+  const topLevel = React.useMemo(
+    () => projects.filter((p) => !p.parentId),
+    [projects]
+  )
+  const subCount = React.useMemo(() => {
+    const map = new Map<string, number>()
+    for (const p of projects) {
+      if (p.parentId) map.set(p.parentId, (map.get(p.parentId) ?? 0) + 1)
+    }
+    return map
+  }, [projects])
+
   const visible = React.useMemo(() => {
-    if (!rangeOn) return projects
+    if (!rangeOn) return topLevel
     const { fromMs, toMs } = resolveReportRange(
       range.range,
       range.from,
@@ -92,8 +105,8 @@ export function ProjectList() {
     )
     const fromIso = isoOf(fromMs)
     const toIso = isoOf(toMs - 1)
-    return projects.filter((p) => projectInRange(p, fromIso, toIso))
-  }, [projects, rangeOn, range])
+    return topLevel.filter((p) => projectInRange(p, fromIso, toIso))
+  }, [topLevel, rangeOn, range])
 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
@@ -140,11 +153,11 @@ export function ProjectList() {
         <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-10 text-center">
           <FolderKanbanIcon className="size-8 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">
-            {projects.length === 0
+            {topLevel.length === 0
               ? "Chưa có dự án nào."
               : "Không có dự án nào trong khoảng thời gian đã chọn."}
           </p>
-          {projects.length === 0 ? (
+          {topLevel.length === 0 ? (
             <CreateProjectDialog existing={projects} />
           ) : null}
         </div>
@@ -174,6 +187,9 @@ export function ProjectList() {
 
                 <p className="text-xs text-muted-foreground">
                   {project.ownerKeys.map((k) => staffName(k)).join(", ") || "—"}
+                  {subCount.get(project.id)
+                    ? ` · ${subCount.get(project.id)} dự án con`
+                    : ""}
                 </p>
 
                 <div className="mt-auto flex items-center justify-between gap-2 text-xs">

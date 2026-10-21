@@ -30,9 +30,13 @@ import {
   type RangeValue,
 } from "@/features/pancake/components/date-range-picker"
 import { resolveReportRange } from "@/features/pancake/types"
+import { ExportReportDialog } from "@/features/reports"
 
 import { ensureProjectFolder } from "../services/project-folder-service"
-import { subscribeToProject } from "../services/projects-service"
+import {
+  subscribeToProject,
+  subscribeToProjects,
+} from "../services/projects-service"
 import { subscribeToProjectTasks } from "../services/project-tasks-service"
 import {
   PROJECT_STAFF,
@@ -44,9 +48,11 @@ import {
   isProjectOverdue,
   projectProgress,
   staffName,
+  subProjectsOf,
   type Project,
   type ProjectTask,
 } from "../types"
+import { DriveCheckDialog } from "./drive-check-dialog"
 import { ProjectDocuments } from "./project-documents"
 import { ProjectKanban } from "./project-kanban"
 import { ProjectTaskCommentsDialog } from "./project-task-comments"
@@ -55,6 +61,7 @@ import {
   EditProjectTaskDialog,
 } from "./project-task-dialogs"
 import { ProjectTaskTable } from "./project-task-table"
+import { SubProjectList } from "./sub-project-list"
 
 const VN_OFFSET = 7 * 60 * 60 * 1000
 const isoOf = (ms: number) =>
@@ -100,6 +107,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const { user } = useAuth()
 
   const [project, setProject] = React.useState<Project | null>(null)
+  const [allProjects, setAllProjects] = React.useState<Project[]>([])
   const [tasks, setTasks] = React.useState<ProjectTask[]>([])
   const [loading, setLoading] = React.useState(true)
   const [notFound, setNotFound] = React.useState(false)
@@ -146,11 +154,28 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
       }
     )
     const u2 = subscribeToProjectTasks(projectId, setTasks, () => {})
+    // the parent (back link) and the sub-projects (list, export targets)
+    const u3 = subscribeToProjects(setAllProjects, () => {})
     return () => {
       u1()
       u2()
+      u3()
     }
   }, [user, projectId])
+
+  const parent = project?.parentId
+    ? (allProjects.find((p) => p.id === project.parentId) ?? null)
+    : null
+  const subProjects = React.useMemo(
+    () => subProjectsOf(allProjects, projectId),
+    [allProjects, projectId]
+  )
+  const reportTargets = project
+    ? [...subProjects, project].map((p) => ({
+        id: p.id,
+        label: `${p.code} ${p.name}`,
+      }))
+    : []
 
   const visible = React.useMemo(() => {
     let out = tasks
@@ -186,11 +211,11 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
       <Link
-        href="/du-an"
+        href={parent ? `/du-an/${parent.id}` : "/du-an"}
         className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeftIcon className="size-4" />
-        Tất cả dự án
+        {parent ? `${parent.code} ${parent.name}` : "Tất cả dự án"}
       </Link>
 
       {error ? (
@@ -260,7 +285,22 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 </Button>
               </div>
             )}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <DriveCheckDialog projectId={projectId} />
+              <ExportReportDialog
+                targets={reportTargets}
+                defaultTargetId={reportTargets[0]?.id}
+              />
+            </div>
           </div>
+
+          {project.parentId ? null : (
+            <SubProjectList
+              parent={project}
+              subProjects={subProjects}
+              allProjects={allProjects}
+            />
+          )}
 
           {/* toolbar */}
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

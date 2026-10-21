@@ -72,6 +72,11 @@ export interface Project {
   /** roster key của người phụ trách (1 hoặc nhiều) */
   ownerKeys: string[]
   status: ProjectStatus
+  /**
+   * id dự án lớn chứa dự án này; null với dự án lớn / dự án thường. Thư mục
+   * Drive của dự án con nằm trong thư mục của dự án lớn.
+   */
+  parentId: string | null
   /** id thư mục Drive của dự án; null khi chưa tạo được */
   driveFolderId: string | null
   /** link mở thư mục Drive của dự án */
@@ -80,6 +85,23 @@ export interface Project {
   createdByUid: string
   createdAt: number
   updatedAt: number
+}
+
+/** Một bước của "Kiểm tra Drive" (`/api/projects/<id>/drive-check`). */
+export type DriveCheck = {
+  key: "account" | "folder" | "write" | "mirror"
+  label: string
+  ok: boolean
+  detail: string
+}
+
+export type ProjectDriveCheck = {
+  ok: boolean
+  folderId: string | null
+  folderUrl: string | null
+  checks: DriveCheck[]
+  /** có lỗi app tự sửa được — gọi lại với `repair: true` để sửa */
+  repairable: boolean
 }
 
 export type ProjectInput = Pick<
@@ -94,10 +116,24 @@ export type ProjectInput = Pick<
 export function nextProjectCode(existing: Project[], now = new Date()): string {
   const year = now.getFullYear()
   const count = existing.filter((p) => {
+    if (p.parentId) return false
     const created = p.createdAt ? new Date(p.createdAt) : now
     return created.getFullYear() === year
   }).length
   return `PRJ-${year}-${String(count + 1).padStart(3, "0")}`
+}
+
+/** Mã dự án con: mã dự án lớn + số thứ tự, VD "PRJ-2026-002-01". */
+export function nextSubProjectCode(parent: Project, existing: Project[]): string {
+  const count = existing.filter((p) => p.parentId === parent.id).length
+  return `${parent.code}-${String(count + 1).padStart(2, "0")}`
+}
+
+/** Dự án con của `parentId`, theo mã. */
+export function subProjectsOf(projects: Project[], parentId: string): Project[] {
+  return projects
+    .filter((p) => p.parentId === parentId)
+    .sort((a, b) => a.code.localeCompare(b.code))
 }
 
 // ------------------------------------------------------------ project task
