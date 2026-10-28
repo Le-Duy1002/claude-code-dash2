@@ -2,11 +2,12 @@ export { ScheduleView } from "./components/schedule-view"
 export { WeekGrid } from "./components/week-grid"
 export { ChangeHistoryDialog } from "./components/change-history-dialog"
 export {
+  ScheduleConflictError,
+  applyOvertimeRows,
   lockWeek,
   setCell,
   setCellNote,
   setFreeNote,
-  setOvertime,
   subscribeToChanges,
   subscribeToWeeks,
   unlockWeek,

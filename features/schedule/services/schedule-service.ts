@@ -4,10 +4,13 @@ import {
   documentId,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   Timestamp,
   where,
   writeBatch,
+  type DocumentData,
+  type DocumentReference,
   type Unsubscribe,
 } from "firebase/firestore"
 
@@ -15,14 +18,15 @@ import { db } from "@/lib/firebase"
 
 import {
   SHIFT_DEFS,
+  SHIFT_IDS,
   WEEKDAY_LABELS,
   formatHourRanges,
   getCell,
   mapScheduleWeek,
+  mergeOvertimeRows,
   staffName,
   weekEndDate,
   type CoverSlot,
-  type OvertimeEntry,
   type ScheduleChange,
   type ScheduleChangeKind,
   type ScheduleWeek,
@@ -50,6 +54,10 @@ function mapChange(id: string, data: Record<string, unknown>): ScheduleChange {
     kind: (data.kind as ScheduleChangeKind) ?? "assign",
     afterLock: Boolean(data.afterLock),
     staffKey: (data.staffKey as string) ?? null,
+    dayIndex: Number.isInteger(data.dayIndex) ? (data.dayIndex as number) : null,
+    shift: SHIFT_IDS.includes(data.shift as ShiftId)
+      ? (data.shift as ShiftId)
+      : null,
     summary: (data.summary as string) ?? "",
     reason: (data.reason as string) ?? null,
   }
@@ -98,7 +106,8 @@ export function subscribeToChanges(
     q,
     (snap) => {
       const rows = snap.docs
-        .map((d) => mapChange(d.id, d.data()))
+        // "estimate": a change this tab just made shows at once, not at 0
+        .map((d) => mapChange(d.id, d.data({ serverTimestamps: "estimate" })))
         .sort((a, b) => b.atMs - a.atMs)
       onData(rows)
     },
@@ -107,7 +116,22 @@ export function subscribeToChanges(
 }
 
 // ------------------------------------------------------------ mutations
-// Every mutation writes the week doc AND a change-log entry in one batch.
+// Every mutation writes the week doc AND a change-log entry in one batch —
+// or one transaction where two people editing at once could clobber each
+// other (a cell, the overtime list).
+
+/**
+ * The cell changed under the user — someone else saved it first. `current`
+ * is what it holds now.
+ */
+export class ScheduleConflictError extends Error {
+  constructor(
+    public current: string | null,
+    public byName: string | null
+  ) {
+    super("Ô này vừa được người khác sửa")
+  }
+}
 
 function weekBase(week: ScheduleWeek, actor: Actor) {
   return {
@@ -124,32 +148,44 @@ type ChangeDraft = {
   staffKey: string | null
   summary: string
   reason?: string | null
+  /** the cell changed, so the grid can show who just touched it */
+  cell?: { dayIndex: number; shift: ShiftId }
 }
 
-function pushChange(
-  batch: ReturnType<typeof writeBatch>,
+/** A change-log entry, to `.set()` in the mutation's batch or transaction. */
+function changeEntry(
   week: ScheduleWeek,
   actor: Actor,
   change: ChangeDraft
-) {
-  batch.set(doc(collection(db, CHANGES)), {
-    weekId: week.weekId,
-    createdAt: serverTimestamp(),
-    byUid: actor.uid,
-    byName: actor.name,
-    kind: change.kind,
-    afterLock: week.status === "locked",
-    staffKey: change.staffKey,
-    summary: change.summary,
-    reason: change.reason ?? null,
-  })
+): [DocumentReference, DocumentData] {
+  return [
+    doc(collection(db, CHANGES)),
+    {
+      weekId: week.weekId,
+      createdAt: serverTimestamp(),
+      byUid: actor.uid,
+      byName: actor.name,
+      kind: change.kind,
+      afterLock: week.status === "locked",
+      staffKey: change.staffKey,
+      dayIndex: change.cell?.dayIndex ?? null,
+      shift: change.cell?.shift ?? null,
+      summary: change.summary,
+      reason: change.reason ?? null,
+    },
+  ]
 }
 
 function slot(dayIndex: number, shift: ShiftId): string {
   return `${WEEKDAY_LABELS[dayIndex]} · ${SHIFT_DEFS[shift].label}`
 }
 
-/** Assign / clear / change the staff in one cell. */
+/**
+ * Assign / clear / change the staff in one cell. Re-reads the cell in a
+ * transaction and throws {@link ScheduleConflictError} when it no longer
+ * holds what the user saw — two people picking the same cell at once must
+ * not silently overwrite each other.
+ */
 export async function setCell(
   week: ScheduleWeek,
   dayIndex: number,
@@ -158,45 +194,55 @@ export async function setCell(
   actor: Actor,
   reason?: string | null
 ): Promise<void> {
-  const before = getCell(week, dayIndex, shift).staff
-  if (before === staffKey) return
+  const seen = getCell(week, dayIndex, shift).staff
+  if (seen === staffKey) return
 
-  const batch = writeBatch(db)
-  batch.set(
-    doc(db, WEEKS, week.weekId),
-    {
-      ...weekBase(week, actor),
-      status: week.status,
-      grid: {
-        [dayIndex]: {
-          // clearing a cell also wipes its note / swap flag / cover
-          [shift]: staffKey
-            ? { staff: staffKey }
-            : { staff: null, note: null, excludeFromScore: null, cover: null },
+  const weekRef = doc(db, WEEKS, week.weekId)
+  await runTransaction(db, async (tx) => {
+    const fresh = mapScheduleWeek(week.weekId, (await tx.get(weekRef)).data())
+    const before = getCell(fresh, dayIndex, shift).staff
+    if (before !== seen) {
+      throw new ScheduleConflictError(before, fresh.updatedByName)
+    }
+
+    tx.set(
+      weekRef,
+      {
+        ...weekBase(fresh, actor),
+        status: fresh.status,
+        grid: {
+          [dayIndex]: {
+            // clearing a cell also wipes its note / swap flag / cover
+            [shift]: staffKey
+              ? { staff: staffKey }
+              : { staff: null, note: null, excludeFromScore: null, cover: null },
+          },
         },
       },
-    },
-    { merge: true }
-  )
+      { merge: true }
+    )
 
-  const kind: ScheduleChangeKind = !before
-    ? "assign"
-    : !staffKey
-      ? "unassign"
-      : "reassign"
-  const summary = !before
-    ? `${staffName(staffKey)} đăng ký ${slot(dayIndex, shift)}`
-    : !staffKey
-      ? `Bỏ ${staffName(before)} khỏi ${slot(dayIndex, shift)}`
-      : `${slot(dayIndex, shift)}: ${staffName(before)} → ${staffName(staffKey)}`
+    const kind: ScheduleChangeKind = !before
+      ? "assign"
+      : !staffKey
+        ? "unassign"
+        : "reassign"
+    const summary = !before
+      ? `${staffName(staffKey)} đăng ký ${slot(dayIndex, shift)}`
+      : !staffKey
+        ? `Bỏ ${staffName(before)} khỏi ${slot(dayIndex, shift)}`
+        : `${slot(dayIndex, shift)}: ${staffName(before)} → ${staffName(staffKey)}`
 
-  pushChange(batch, week, actor, {
-    kind,
-    staffKey: staffKey ?? before,
-    summary,
-    reason,
+    tx.set(
+      ...changeEntry(fresh, actor, {
+        kind,
+        staffKey: staffKey ?? before,
+        summary,
+        reason,
+        cell: { dayIndex, shift },
+      })
+    )
   })
-  await batch.commit()
 }
 
 /**
@@ -252,39 +298,55 @@ export async function setCellNote(
     },
     { merge: true }
   )
-  pushChange(batch, week, actor, {
-    kind: "note",
-    staffKey: current.staff,
-    summary: `${slot(dayIndex, shift)}: ${
-      parts.join("; ") || "xoá ghi chú / đổi ca"
-    }`,
-    reason,
-  })
+  batch.set(
+    ...changeEntry(week, actor, {
+      kind: "note",
+      staffKey: current.staff,
+      summary: `${slot(dayIndex, shift)}: ${
+        parts.join("; ") || "xoá ghi chú / đổi ca"
+      }`,
+      reason,
+      cell: { dayIndex, shift },
+    })
+  )
   await batch.commit()
 }
 
-/** Replace the whole overtime list for a week. */
-export async function setOvertime(
+/**
+ * Set or remove one staff's overtime on some days (`hours <= 0` removes).
+ * Applied in a transaction to the overtime list as stored NOW, so two people
+ * adding overtime at once don't wipe each other's entries.
+ */
+export async function applyOvertimeRows(
   week: ScheduleWeek,
-  overtime: OvertimeEntry[],
+  staffKey: string,
+  rows: { dayIndex: number; hours: number }[],
   actor: Actor,
   summary: string,
-  affectedStaffKey: string | null,
   reason?: string | null
 ): Promise<void> {
-  const batch = writeBatch(db)
-  batch.set(
-    doc(db, WEEKS, week.weekId),
-    { ...weekBase(week, actor), status: week.status, overtime },
-    { merge: true }
-  )
-  pushChange(batch, week, actor, {
-    kind: "overtime",
-    staffKey: affectedStaffKey,
-    summary,
-    reason,
+  if (rows.length === 0) return
+  const weekRef = doc(db, WEEKS, week.weekId)
+  await runTransaction(db, async (tx) => {
+    const fresh = mapScheduleWeek(week.weekId, (await tx.get(weekRef)).data())
+    tx.set(
+      weekRef,
+      {
+        ...weekBase(fresh, actor),
+        status: fresh.status,
+        overtime: mergeOvertimeRows(fresh.overtime, staffKey, rows),
+      },
+      { merge: true }
+    )
+    tx.set(
+      ...changeEntry(fresh, actor, {
+        kind: "overtime",
+        staffKey,
+        summary,
+        reason,
+      })
+    )
   })
-  await batch.commit()
 }
 
 /** Set the free-text "note làm thêm giờ" for a week. */
@@ -301,14 +363,16 @@ export async function setFreeNote(
     { ...weekBase(week, actor), status: week.status, freeNote },
     { merge: true }
   )
-  pushChange(batch, week, actor, {
-    kind: "note",
-    staffKey: null,
-    summary: freeNote.trim()
-      ? `Sửa ghi chú tuần: "${freeNote.trim().slice(0, 80)}"`
-      : "Xoá ghi chú tuần",
-    reason,
-  })
+  batch.set(
+    ...changeEntry(week, actor, {
+      kind: "note",
+      staffKey: null,
+      summary: freeNote.trim()
+        ? `Sửa ghi chú tuần: "${freeNote.trim().slice(0, 80)}"`
+        : "Xoá ghi chú tuần",
+      reason,
+    })
+  )
   await batch.commit()
 }
 
@@ -328,11 +392,13 @@ export async function lockWeek(
     },
     { merge: true }
   )
-  pushChange(batch, week, actor, {
-    kind: "lock",
-    staffKey: null,
-    summary: `Chốt lịch tuần`,
-  })
+  batch.set(
+    ...changeEntry(week, actor, {
+      kind: "lock",
+      staffKey: null,
+      summary: `Chốt lịch tuần`,
+    })
+  )
   await batch.commit()
 }
 
@@ -349,11 +415,13 @@ export async function unlockWeek(
     { merge: true }
   )
   // record while still "locked" so it lands in the after-lock history
-  pushChange(batch, week, actor, {
-    kind: "unlock",
-    staffKey: null,
-    summary: "Bỏ chốt để điều chỉnh",
-    reason,
-  })
+  batch.set(
+    ...changeEntry(week, actor, {
+      kind: "unlock",
+      staffKey: null,
+      summary: "Bỏ chốt để điều chỉnh",
+      reason,
+    })
+  )
   await batch.commit()
 }

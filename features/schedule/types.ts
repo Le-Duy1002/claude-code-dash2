@@ -413,9 +413,160 @@ export type ScheduleChange = {
   afterLock: boolean
   /** staff affected, for filtering (null for lock/unlock/note) */
   staffKey: string | null
+  /** the cell changed, for a cell change logged since 28/10/2026; else null */
+  dayIndex: number | null
+  shift: ShiftId | null
   /** human-readable Vietnamese description */
   summary: string
   reason: string | null
+}
+
+/**
+ * `overtime` with `rows` applied for one staff: each row replaces that
+ * staff's entry for its day, `hours <= 0` removes it.
+ */
+export function mergeOvertimeRows(
+  overtime: OvertimeEntry[],
+  staffKey: string,
+  rows: { dayIndex: number; hours: number }[]
+): OvertimeEntry[] {
+  const touched = new Set(rows.map((r) => r.dayIndex))
+  const next = overtime.filter(
+    (e) => !(e.staffKey === staffKey && touched.has(e.dayIndex))
+  )
+  for (const r of rows) {
+    if (r.hours > 0) {
+      next.push({
+        id: `${staffKey}-${r.dayIndex}`,
+        staffKey,
+        dayIndex: r.dayIndex,
+        hours: r.hours,
+        note: "",
+      })
+    }
+  }
+  return next.sort((a, b) =>
+    a.staffKey === b.staffKey
+      ? a.dayIndex - b.dayIndex
+      : a.staffKey.localeCompare(b.staffKey)
+  )
+}
+
+// ------------------------------------------------------------ live presence
+// Who has the Lịch làm page open and what they're doing on it, so people
+// registering at the same time see each other (user, 28/10/2026).
+
+/** What someone has open: a cell's staff picker or note, or a week's extras. */
+export type PresenceAction = "staff" | "note" | "overtime" | "freeNote"
+
+export const PRESENCE_ACTION_LABELS: Record<PresenceAction, string> = {
+  staff: "đang chọn người",
+  note: "đang sửa ghi chú / đổi ca",
+  overtime: "đang nhập giờ làm thêm",
+  freeNote: "đang sửa ghi chú tuần",
+}
+
+export type PresenceFocus = {
+  weekId: string
+  action: PresenceAction
+  /** the cell — null for the week-level actions */
+  dayIndex: number | null
+  shift: ShiftId | null
+}
+
+/** One open tab — `schedulePresence/{tabId}`. */
+export type SchedulePresence = {
+  id: string
+  uid: string
+  name: string
+  /** `yyyy-mm` of the month being looked at */
+  month: string
+  focus: PresenceFocus | null
+  /** last heartbeat */
+  seenAtMs: number
+  /** this client's own write, not yet confirmed — `seenAtMs` is an estimate */
+  pending: boolean
+}
+
+/** A tab writes at least this often while open. */
+export const PRESENCE_HEARTBEAT_MS = 20_000
+/**
+ * A tab silent this long is gone — closed without saying so. Background tabs
+ * get their timers throttled to about once a minute, hence the margin.
+ */
+export const PRESENCE_STALE_MS = 80_000
+
+export function samePresenceFocus(
+  a: PresenceFocus | null,
+  b: PresenceFocus | null
+): boolean {
+  if (!a || !b) return a === b
+  return (
+    a.weekId === b.weekId &&
+    a.action === b.action &&
+    a.dayIndex === b.dayIndex &&
+    a.shift === b.shift
+  )
+}
+
+/** `"Ca chiều T3 07/10"`, or the week label for a week-level action. */
+export function describeFocus(focus: PresenceFocus): string {
+  if (focus.dayIndex == null || !focus.shift) return weekLabel(focus.weekId)
+  return `Ca ${SHIFT_DEFS[focus.shift].label.toLowerCase()} ${
+    WEEKDAY_SHORT[focus.dayIndex]
+  } ${formatDm(addDays(focus.weekId, focus.dayIndex))}`
+}
+
+const SHIFT_ID_SET = new Set<string>(SHIFT_IDS)
+
+function mapFocus(value: unknown): PresenceFocus | null {
+  if (!value || typeof value !== "object") return null
+  const f = value as Record<string, unknown>
+  if (
+    typeof f.weekId !== "string" ||
+    typeof f.action !== "string" ||
+    !(f.action in PRESENCE_ACTION_LABELS)
+  ) {
+    return null
+  }
+  const dayIndex = Number.isInteger(f.dayIndex) ? (f.dayIndex as number) : null
+  const shift =
+    typeof f.shift === "string" && SHIFT_ID_SET.has(f.shift)
+      ? (f.shift as ShiftId)
+      : null
+  return { weekId: f.weekId, action: f.action as PresenceAction, dayIndex, shift }
+}
+
+/** Map a raw `schedulePresence/{tabId}` document. SDK-agnostic. */
+export function mapPresence(
+  id: string,
+  data: Record<string, unknown>
+): SchedulePresence {
+  return {
+    id,
+    uid: String(data.uid ?? ""),
+    name: String(data.name ?? "Người dùng"),
+    month: String(data.month ?? ""),
+    focus: mapFocus(data.focus),
+    seenAtMs: tsToMs(data.seenAt),
+    pending: false,
+  }
+}
+
+/** `"vừa xong"`, `"3 phút trước"`, `"14:05"` (today) or a full date-time. */
+export function formatAgo(atMs: number, nowMs: number): string {
+  if (!atMs) return "—"
+  const diff = Math.max(0, nowMs - atMs)
+  if (diff < 45_000) return "vừa xong"
+  if (diff < 3_600_000) return `${Math.round(diff / 60_000)} phút trước`
+  const vnDay = (ms: number) => new Date(ms + VN_OFFSET_MS).toISOString().slice(0, 10)
+  if (vnDay(atMs) === vnDay(nowMs)) {
+    return new Intl.DateTimeFormat("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(atMs))
+  }
+  return formatDateTime(atMs)
 }
 
 // ------------------------------------------------------------ hours for scoring

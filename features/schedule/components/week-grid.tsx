@@ -34,6 +34,7 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
@@ -41,11 +42,12 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
 import {
+  ScheduleConflictError,
+  applyOvertimeRows,
   lockWeek,
   setCell,
   setCellNote,
   setFreeNote,
-  setOvertime,
   unlockWeek,
   type Actor,
 } from "../services/schedule-service"
@@ -70,6 +72,12 @@ import {
   type ScheduleWeek,
   type ShiftId,
 } from "../types"
+import {
+  CellLiveFrame,
+  WeekViewerTags,
+  useCellOtherNames,
+  useReportFocus,
+} from "./live-presence"
 
 // An empty cell has value `null` and shows nothing; the "clear" item is only
 // offered once someone is assigned.
@@ -354,7 +362,19 @@ function ShiftCell({
   reason: string | null
 }) {
   const cell = getCell(week, dayIndex, shift)
+  const [staffOpen, setStaffOpen] = React.useState(false)
   const [noteOpen, setNoteOpen] = React.useState(false)
+  const othersHere = useCellOtherNames(week.weekId, dayIndex, shift)
+  useReportFocus(
+    staffOpen || noteOpen
+      ? {
+          weekId: week.weekId,
+          action: staffOpen ? "staff" : "note",
+          dayIndex,
+          shift,
+        }
+      : null
+  )
   const [noteDraft, setNoteDraft] = React.useState(cell.note ?? "")
   const [excludeDraft, setExcludeDraft] = React.useState(
     Boolean(cell.excludeFromScore)
@@ -376,6 +396,17 @@ function ShiftCell({
     try {
       await setCell(week, dayIndex, shift, staffKey, actor, reason)
     } catch (error) {
+      if (error instanceof ScheduleConflictError) {
+        // someone saved this cell first — theirs stands, nothing overwritten
+        toast.warning(
+          `Ca ${SHIFT_DEFS[shift].label.toLowerCase()} ${WEEKDAY_LABELS[dayIndex]} vừa được ${
+            error.byName ?? "người khác"
+          } chọn ${
+            error.current ? staffName(error.current) : "để trống"
+          } trước bạn — xem lại rồi chọn.`
+        )
+        return
+      }
       toast.error(`Không lưu được: ${(error as Error).message}`)
     }
   }
@@ -426,136 +457,146 @@ function ShiftCell({
 
   if (!editable) {
     return (
-      <div className="flex min-h-7 flex-col items-center justify-center gap-0.5 px-1 py-0.5">
-        {cell.staff ? (
-          <span
-            className={cn(
-              "rounded-md border px-2.5 py-0.5 text-sm font-medium",
-              staffTone(cell.staff).chip
-            )}
-          >
-            {staffName(cell.staff)}
-          </span>
-        ) : null}
-        {marker}
-      </div>
+      <CellLiveFrame weekId={week.weekId} dayIndex={dayIndex} shift={shift}>
+        <div className="flex min-h-7 flex-col items-center justify-center gap-0.5 px-1 py-0.5">
+          {cell.staff ? (
+            <span
+              className={cn(
+                "rounded-md border px-2.5 py-0.5 text-sm font-medium",
+                staffTone(cell.staff).chip
+              )}
+            >
+              {staffName(cell.staff)}
+            </span>
+          ) : null}
+          {marker}
+        </div>
+      </CellLiveFrame>
     )
   }
 
   return (
-    <div className="flex flex-col gap-0.5">
-      <div className="flex items-center gap-0.5">
-        <Select
-          items={cell.staff ? FILLED_OPTIONS : STAFF_OPTIONS}
-          value={cell.staff}
-          onValueChange={(v) => commitStaff(!v || v === CLEAR ? null : v)}
-        >
-          <SelectTrigger
-            size="sm"
-            className={cn(
-              "w-full min-w-[5rem]",
-              cell.staff
-                ? cn("font-medium", staffTone(cell.staff).chip)
-                : "border-dashed dark:bg-transparent [&_svg]:opacity-40 hover:[&_svg]:opacity-100 hover:bg-muted/60"
-            )}
+    <CellLiveFrame weekId={week.weekId} dayIndex={dayIndex} shift={shift}>
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-0.5">
+          <Select
+            items={cell.staff ? FILLED_OPTIONS : STAFF_OPTIONS}
+            value={cell.staff}
+            onValueChange={(v) => commitStaff(!v || v === CLEAR ? null : v)}
+            onOpenChange={(open) => setStaffOpen(open)}
           >
-            <SelectValue className="justify-center">
-              {(v: string | null) => (v ? staffName(v) : null)}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {cell.staff ? (
-                <SelectItem value={CLEAR} className="text-muted-foreground">
-                  <XIcon />
-                  Bỏ chọn
-                </SelectItem>
-              ) : null}
-              {SCHEDULE_STAFF.map((s) => (
-                <SelectItem key={s.key} value={s.key}>
-                  <span
-                    className={cn("size-2 rounded-full", staffTone(s.key).dot)}
-                  />
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-        <Popover.Root open={noteOpen} onOpenChange={setNoteOpen}>
-          <Popover.Trigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className={cn(
-                  "shrink-0",
-                  cell.note || cell.excludeFromScore
-                    ? "text-amber-600 dark:text-amber-400"
-                    : "text-muted-foreground/50 hover:text-foreground"
-                )}
-              />
-            }
-          >
-            {cell.excludeFromScore ? (
-              <RepeatIcon />
-            ) : (
-              <MessageSquareTextIcon />
-            )}
-          </Popover.Trigger>
-          <Popover.Portal>
-            <Popover.Positioner sideOffset={4} align="end" className="z-50">
-              <Popover.Popup className="z-50 w-80 rounded-lg border bg-popover p-3 text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95">
-                <ShiftHeading
-                  shift={shift}
-                  dayIndex={dayIndex}
-                  staff={cell.staff}
-                />
-                <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs">
-                  <Checkbox
-                    checked={excludeDraft}
-                    onCheckedChange={(c) => setExcludeDraft(c === true)}
-                    className="mt-0.5"
-                  />
-                  <span>
-                    Ca này có đổi / nhờ người trực hộ — bỏ qua khi chấm tiêu chí
-                    1 (Đủ giờ ca) &amp; 2 (Vào ca)
-                  </span>
-                </label>
-                {excludeDraft ? (
-                  <CoverPicker
-                    shift={shift}
-                    owner={cell.staff}
-                    value={coverDraft}
-                    onChange={setCoverDraft}
-                  />
+            <SelectTrigger
+              size="sm"
+              className={cn(
+                "w-full min-w-[5rem]",
+                cell.staff
+                  ? cn("font-medium", staffTone(cell.staff).chip)
+                  : "border-dashed dark:bg-transparent [&_svg]:opacity-40 hover:[&_svg]:opacity-100 hover:bg-muted/60"
+              )}
+            >
+              <SelectValue className="justify-center">
+                {(v: string | null) => (v ? staffName(v) : null)}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {othersHere.length ? (
+                  <SelectLabel className="text-amber-700 dark:text-amber-400">
+                    ⚠ {othersHere.join(", ")} cũng đang chọn ô này
+                  </SelectLabel>
                 ) : null}
-                <Textarea
-                  value={noteDraft}
-                  onChange={(e) => setNoteDraft(e.target.value)}
-                  rows={2}
-                  placeholder="Ghi chú thêm (không bắt buộc)"
-                  className="mt-3 min-h-0 text-sm"
+                {cell.staff ? (
+                  <SelectItem value={CLEAR} className="text-muted-foreground">
+                    <XIcon />
+                    Bỏ chọn
+                  </SelectItem>
+                ) : null}
+                {SCHEDULE_STAFF.map((s) => (
+                  <SelectItem key={s.key} value={s.key}>
+                    <span
+                      className={cn("size-2 rounded-full", staffTone(s.key).dot)}
+                    />
+                    {s.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <Popover.Root open={noteOpen} onOpenChange={setNoteOpen}>
+            <Popover.Trigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className={cn(
+                    "shrink-0",
+                    cell.note || cell.excludeFromScore
+                      ? "text-amber-600 dark:text-amber-400"
+                      : "text-muted-foreground/50 hover:text-foreground"
+                  )}
                 />
-                <div className="mt-2 flex justify-end gap-1.5">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setNoteOpen(false)}
-                  >
-                    Huỷ
-                  </Button>
-                  <Button size="sm" onClick={commitNote}>
-                    Lưu
-                  </Button>
-                </div>
-              </Popover.Popup>
-            </Popover.Positioner>
-          </Popover.Portal>
-        </Popover.Root>
+              }
+            >
+              {cell.excludeFromScore ? (
+                <RepeatIcon />
+              ) : (
+                <MessageSquareTextIcon />
+              )}
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Positioner sideOffset={4} align="end" className="z-50">
+                <Popover.Popup className="z-50 w-80 rounded-lg border bg-popover p-3 text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95">
+                  <ShiftHeading
+                    shift={shift}
+                    dayIndex={dayIndex}
+                    staff={cell.staff}
+                  />
+                  <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs">
+                    <Checkbox
+                      checked={excludeDraft}
+                      onCheckedChange={(c) => setExcludeDraft(c === true)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      Ca này có đổi / nhờ người trực hộ — bỏ qua khi chấm tiêu chí
+                      1 (Đủ giờ ca) &amp; 2 (Vào ca)
+                    </span>
+                  </label>
+                  {excludeDraft ? (
+                    <CoverPicker
+                      shift={shift}
+                      owner={cell.staff}
+                      value={coverDraft}
+                      onChange={setCoverDraft}
+                    />
+                  ) : null}
+                  <Textarea
+                    value={noteDraft}
+                    onChange={(e) => setNoteDraft(e.target.value)}
+                    rows={2}
+                    placeholder="Ghi chú thêm (không bắt buộc)"
+                    className="mt-3 min-h-0 text-sm"
+                  />
+                  <div className="mt-2 flex justify-end gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setNoteOpen(false)}
+                    >
+                      Huỷ
+                    </Button>
+                    <Button size="sm" onClick={commitNote}>
+                      Lưu
+                    </Button>
+                  </div>
+                </Popover.Popup>
+              </Popover.Positioner>
+            </Popover.Portal>
+          </Popover.Root>
+        </div>
+        {marker}
       </div>
-      {marker}
-    </div>
+    </CellLiveFrame>
   )
 }
 
@@ -935,7 +976,15 @@ function HoursGrid({
   )
 }
 
+/** Reports "đang nhập giờ làm thêm" for `weekId` while an overtime popover is open. */
+function useReportOvertime(weekId: string, open: boolean) {
+  useReportFocus(
+    open ? { weekId, action: "overtime", dayIndex: null, shift: null } : null
+  )
+}
+
 function OvertimeChip({
+  weekId,
   dayIndex,
   hours,
   tone,
@@ -943,6 +992,7 @@ function OvertimeChip({
   onSet,
   onRemove,
 }: {
+  weekId: string
   dayIndex: number
   hours: number
   tone: Tone
@@ -951,6 +1001,7 @@ function OvertimeChip({
   onRemove: () => void
 }) {
   const [open, setOpen] = React.useState(false)
+  useReportOvertime(weekId, open)
   const label = `${WEEKDAY_SHORT[dayIndex]} · ${hours}h`
 
   if (!editable) {
@@ -1047,8 +1098,15 @@ function useRangeSelect() {
 
 type OtRow = { dayIndex: number; hours: number }
 
-function AddOvertime({ onAddMany }: { onAddMany: (rows: OtRow[]) => void }) {
+function AddOvertime({
+  weekId,
+  onAddMany,
+}: {
+  weekId: string
+  onAddMany: (rows: OtRow[]) => void
+}) {
   const [open, setOpen] = React.useState(false)
+  useReportOvertime(weekId, open)
   const [step, setStep] = React.useState<"day" | "hour">("day")
   const days = useRangeSelect()
   const hours = useRangeSelect() // index into HOUR_CHOICES
@@ -1181,36 +1239,16 @@ function OvertimeEditor({
 }) {
   async function applyRows(staffKey: string, rows: OtRow[]) {
     if (rows.length === 0) return
-    const touched = new Set(rows.map((r) => r.dayIndex))
-    const next = week.overtime.filter(
-      (e) => !(e.staffKey === staffKey && touched.has(e.dayIndex))
-    )
-    for (const r of rows) {
-      if (r.hours > 0) {
-        next.push({
-          id: `${staffKey}-${r.dayIndex}`,
-          staffKey,
-          dayIndex: r.dayIndex,
-          hours: r.hours,
-          note: "",
-        })
-      }
-    }
-    next.sort((a, b) =>
-      a.staffKey === b.staffKey
-        ? a.dayIndex - b.dayIndex
-        : a.staffKey.localeCompare(b.staffKey)
-    )
     const label = rows
       .map((r) => `${WEEKDAY_SHORT[r.dayIndex]} ${r.hours > 0 ? `${r.hours}h` : "bỏ"}`)
       .join(", ")
     try {
-      await setOvertime(
+      await applyOvertimeRows(
         week,
-        next,
+        staffKey,
+        rows,
         actor,
         `Giờ làm thêm ${staffName(staffKey)}: ${label}`,
-        staffKey,
         reason
       )
     } catch (error) {
@@ -1222,8 +1260,9 @@ function OvertimeEditor({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="text-xs font-medium text-muted-foreground">
+      <p className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-muted-foreground">
         Giờ làm thêm{total > 0 ? ` — tổng ${formatHours(total)}` : ""}
+        <WeekViewerTags weekId={week.weekId} action="overtime" />
       </p>
       <ul className="flex flex-col gap-1.5">
         {SCHEDULE_STAFF.map((s) => {
@@ -1241,6 +1280,7 @@ function OvertimeEditor({
               {mine.map((e) => (
                 <OvertimeChip
                   key={e.dayIndex}
+                  weekId={week.weekId}
                   dayIndex={e.dayIndex}
                   hours={e.hours}
                   tone={staffTone(s.key)}
@@ -1255,7 +1295,10 @@ function OvertimeEditor({
                 <span className="text-xs text-muted-foreground">—</span>
               ) : null}
               {editable ? (
-                <AddOvertime onAddMany={(rows) => applyRows(s.key, rows)} />
+                <AddOvertime
+                  weekId={week.weekId}
+                  onAddMany={(rows) => applyRows(s.key, rows)}
+                />
               ) : null}
             </li>
           )
@@ -1279,30 +1322,43 @@ function FreeNoteEditor({
   reason: string | null
 }) {
   const [value, setValue] = React.useState(week.freeNote)
+  const [focused, setFocused] = React.useState(false)
+  useReportFocus(
+    focused
+      ? { weekId: week.weekId, action: "freeNote", dayIndex: null, shift: null }
+      : null
+  )
+  // follow the stored note — but never while typing in it: someone else
+  // registering a shift must not wipe what is being written here
   React.useEffect(() => {
-    setValue(week.freeNote)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [week.weekId, week.updatedAtMs])
+    if (!focused) setValue(week.freeNote)
+  }, [week.weekId, week.freeNote, focused])
 
   async function commit() {
-    if (value === week.freeNote) return
-    try {
-      await setFreeNote(week, value, actor, reason)
-    } catch (error) {
-      toast.error(`Không lưu được: ${(error as Error).message}`)
-      setValue(week.freeNote)
+    if (value !== week.freeNote) {
+      try {
+        await setFreeNote(week, value, actor, reason)
+      } catch (error) {
+        toast.error(`Không lưu được: ${(error as Error).message}`)
+        setValue(week.freeNote)
+      }
     }
+    // only now: un-focusing re-syncs from the stored note, which by now
+    // holds what was just saved (no flash of the old text)
+    setFocused(false)
   }
 
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="text-xs font-medium text-muted-foreground">
+      <p className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-muted-foreground">
         Ghi chú tự do (note làm thêm giờ, đổi ca…)
+        <WeekViewerTags weekId={week.weekId} action="freeNote" />
       </p>
       {editable ? (
         <Textarea
           value={value}
           onChange={(e) => setValue(e.target.value)}
+          onFocus={() => setFocused(true)}
           onBlur={commit}
           rows={4}
           placeholder="VD: Duy T2:2h, T3:1h; Hà nghỉ chiều T6 nhờ Thương trực hộ…"

@@ -29,6 +29,7 @@ import {
   type ScheduleWeek,
 } from "../types"
 import { ChangeHistoryDialog } from "./change-history-dialog"
+import { LivePresencePanel, SchedulePresenceProvider } from "./live-presence"
 import { WeekGrid } from "./week-grid"
 
 function shiftMonth(year: number, month: number, delta: number) {
@@ -105,17 +106,19 @@ export function ScheduleView() {
   }, [today, year])
 
   const monthLabel = `${MONTH_LABELS[month - 1]}/${year}`
+  const monthKey = `${year}-${String(month).padStart(2, "0")}`
 
-  return (
+  const content = (
     <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="font-heading text-lg font-medium">Lịch làm</h1>
           <p className="text-sm text-muted-foreground">
-            Mỗi người tự chọn tên mình vào ca đăng ký. Quản lý bấm{" "}
-            <strong>Chốt tuần</strong> khi lịch đã ổn — sau đó mọi chỉnh sửa
-            được ghi vào lịch sử. Dữ liệu này dùng chấm tiêu chí 1–2 và tính
-            lương.
+            Mỗi người tự chọn tên mình vào ca đăng ký. Lịch cập nhật trực
+            tiếp: ô đang có người chọn hiện viền màu kèm tên người đó, ô vừa
+            được sửa sáng lên vài giây. Quản lý bấm <strong>Chốt tuần</strong>{" "}
+            khi lịch đã ổn — sau đó mọi chỉnh sửa được ghi vào lịch sử. Dữ
+            liệu này dùng chấm tiêu chí 1–2 và tính lương.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -184,6 +187,8 @@ export function ScheduleView() {
         </div>
       </div>
 
+      {actor ? <LivePresencePanel actor={actor} changes={changes} /> : null}
+
       {error ? (
         <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
           <AlertTriangleIcon className="mt-0.5 size-4 shrink-0" />
@@ -204,5 +209,13 @@ export function ScheduleView() {
         </div>
       ) : null}
     </div>
+  )
+
+  return actor ? (
+    <SchedulePresenceProvider actor={actor} month={monthKey} changes={changes}>
+      {content}
+    </SchedulePresenceProvider>
+  ) : (
+    content
   )
 }
