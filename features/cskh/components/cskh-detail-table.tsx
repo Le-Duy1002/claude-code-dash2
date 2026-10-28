@@ -134,7 +134,8 @@ function MetricCells({
       {CSKH_GROUPS.map((g) => {
         const m = sums[g.key]
         const cells: React.ReactNode[] = [
-          m.viewed,
+          // a staff's khách xem starts with tracking (see `dailyMetrics`)
+          g.key === CSKH_TOTAL || m.tracked ? m.viewed : "—",
           m.closedKnown ? m.closed : "—",
           m.tracked ? formatMoney(m.price) : "—",
           formatMoney(m.paid),

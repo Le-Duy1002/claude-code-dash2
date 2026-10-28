@@ -16,6 +16,7 @@ import {
 import {
   CSKH_PAGE_NAME,
   formatDateTime,
+  formatDm,
   type CskhCustomer,
   type CskhReport,
 } from "../types"
@@ -151,7 +152,13 @@ export function CskhSection({
           />
           <p className="text-xs text-muted-foreground">
             Khách xem = số lần gắn tag tên nhân viên trong ngày (giống Pancake,
-            có thể âm khi gỡ tag). Khách chốt ở cột Tổng = số lần gắn tag
+            có thể âm khi gỡ tag). Ở cột từng người, khách xem chỉ cộng từ
+            ngày app bắt đầu theo dõi khách chốt
+            {report.closedTrackedFrom
+              ? ` (${formatDm(report.closedTrackedFrom)})`
+              : ""}
+            , cùng những ngày với khách chốt của người đó; cột Tổng cộng đủ cả
+            kỳ. Khách chốt ở cột Tổng = số lần gắn tag
             &quot;Chốt sale&quot; trong ngày theo Thẻ hội thoại của Pancake; ở
             cột từng người = hội thoại có cả tag &quot;Chốt sale&quot; và tag
             tên người đó, tính vào ngày Pancake ghi nhận gắn &quot;Chốt

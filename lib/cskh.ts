@@ -509,7 +509,7 @@ export async function readCskhReport(dates: string[]): Promise<{
   } else {
     if (from < closedTrackedFrom) {
       warnings.push(
-        `Trước ${formatDm(closedTrackedFrom)}: app chưa theo dõi từng khách chốt, nên chỉ cột Tổng có khách chốt (số tag "Chốt sale" của Pancake). Phần chia theo nhân viên, giá bản luận và AOV chỉ có từ ngày này (trước đó hiện "—").`
+        `Trước ${formatDm(closedTrackedFrom)}: app chưa theo dõi từng khách chốt, nên chỉ cột Tổng có khách chốt (số tag "Chốt sale" của Pancake). Phần chia theo nhân viên (cả khách xem), giá bản luận và AOV chỉ có từ ngày này (trước đó hiện "—").`
       )
     }
     // the tracking start day's Pancake count includes the hours before it

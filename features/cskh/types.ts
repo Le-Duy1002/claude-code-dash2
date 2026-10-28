@@ -6,6 +6,9 @@
  *  - Khách xem (per staff) = Pancake's own daily count of that staff's name
  *    tag ("Duy" / "Kỳ" / "Thắng" / "Thương"): net gắn − gỡ, the same number
  *    Pancake's "Thẻ hội thoại" screen shows, so one day can be negative.
+ *    A staff column counts it only from `closedTrackedFrom` on, the same
+ *    days as that staff's khách chốt (user, 28/10/2026) — Tổng counts every
+ *    day.
  *  - Khách chốt comes from Pancake's Thẻ hội thoại (user, 20/10/2026): Tổng
  *    is Pancake's own daily "Chốt sale" count, every day. Per staff it is a
  *    conversation carrying both "Chốt sale" and that staff's name tag.
@@ -317,6 +320,7 @@ export function isRelevant(
 // ------------------------------------------------------------ metrics
 
 export type CskhMetrics = {
+  /** khách xem — for a staff, only the days from `closedTrackedFrom` on */
   viewed: number
   /** khách xem on the days whose khách chốt is known — what tỉ lệ chốt divides by */
   viewedForRate: number
@@ -389,8 +393,11 @@ export function dailyMetrics(report: CskhReport): CskhDaily {
     }
     for (const s of CSKH_STAFF) {
       const v = report.views[date]?.[s.key] ?? 0
-      row[s.key].viewed += v
       row[CSKH_TOTAL].viewed += v
+      // a staff's khách chốt starts with tracking, so their khách xem does
+      // too — otherwise a row spanning the start shows a khách xem that
+      // tỉ lệ chốt doesn't divide by
+      if (tracked) row[s.key].viewed += v
     }
     const pancakeClosed = report.pancakeClosed[date]
     if (pancakeClosed != null) {
