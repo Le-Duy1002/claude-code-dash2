@@ -74,6 +74,17 @@ pulled from it must be ported to the base-ui API by hand.
   and only in the browser via `getFirebaseAnalytics()`.
 - `lib/auth.ts` — thin wrappers over Firebase auth calls plus
   `getAuthErrorMessage()` (maps error codes to Vietnamese copy).
+- Google sign-in: on https the `authDomain` is the site's own host, and
+  `next.config.ts` proxies `/__/auth/*` to `<project>.firebaseapp.com`. A
+  cross-domain helper loses its state on mobile browsers ("missing initial
+  state"). Phones use `signInWithRedirect` (popup on desktop), and the
+  `LoginForm` reads the result on return. In-app browsers (Zalo, Messenger, …;
+  `lib/in-app-browser.ts`) can't finish Google sign-in at all, so the button
+  reopens the page in Chrome/Safari. **A new production domain needs two
+  console steps:** add it to Firebase Auth authorized domains, and add
+  `https://<domain>/__/auth/handler` to the Google OAuth web client's
+  authorized redirect URIs. Without the redirect URI, Google answers
+  `redirect_uri_mismatch`.
 - `lib/user.ts` — `ensureUserProfile(user)` upserts `users/{uid}` on every
   sign-in (call it after any successful auth in new flows).
 - `components/auth-provider.tsx` — `useAuth()` → `{ user, loading }`, backed by

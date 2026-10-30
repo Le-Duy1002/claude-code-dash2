@@ -1,8 +1,10 @@
 import {
   createUserWithEmailAndPassword,
+  getRedirectResult,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut as firebaseSignOut,
   type UserCredential,
 } from "firebase/auth"
@@ -19,6 +21,20 @@ export function signUpWithEmail(email: string, password: string): Promise<UserCr
 
 export function signInWithGoogle(): Promise<UserCredential> {
   return signInWithPopup(auth, googleProvider)
+}
+
+/**
+ * Google sign-in as a full-page redirect, for phones: a popup there opens a
+ * second tab that doesn't reliably hand the result back. The page reloads
+ * on return; pick the result up with `getGoogleRedirectResult()`.
+ */
+export function signInWithGoogleRedirect(): Promise<never> {
+  return signInWithRedirect(auth, googleProvider)
+}
+
+/** The credential of a just-finished redirect sign-in, else null. */
+export function getGoogleRedirectResult(): Promise<UserCredential | null> {
+  return getRedirectResult(auth)
 }
 
 export function resetPassword(email: string): Promise<void> {

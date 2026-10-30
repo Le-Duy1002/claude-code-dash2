@@ -1,18 +1,26 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState, useSyncExternalStore } from "react"
 import { useRouter } from "next/navigation"
+import { CopyIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import Image from "next/image"
 
 import {
   getAuthErrorMessage,
+  getGoogleRedirectResult,
   resetPassword,
   signInWithEmail,
   signInWithGoogle,
+  signInWithGoogleRedirect,
   signUpWithEmail,
 } from "@/lib/auth"
+import {
+  inAppBrowserName,
+  systemBrowserName,
+  systemBrowserUrl,
+} from "@/lib/in-app-browser"
 import { ensureUserProfile } from "@/lib/user"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -28,6 +36,74 @@ import { Input } from "@/components/ui/input"
 
 type Mode = "login" | "register"
 
+const noSubscribe = () => () => {}
+
+/** The browser's user agent; null while server-rendering. */
+function useUserAgent(): string | null {
+  return useSyncExternalStore(
+    noSubscribe,
+    () => navigator.userAgent,
+    () => null
+  )
+}
+
+async function copyCurrentLink() {
+  const link = window.location.href
+  try {
+    await navigator.clipboard.writeText(link)
+  } catch {
+    // in-app WebViews often lack the async clipboard API
+    const field = document.createElement("textarea")
+    field.value = link
+    document.body.appendChild(field)
+    field.select()
+    const copied = document.execCommand("copy")
+    field.remove()
+    if (!copied) {
+      toast.error("Không sao chép được link.")
+      return
+    }
+  }
+  toast.success("Đã sao chép link — dán vào trình duyệt để mở.")
+}
+
+/**
+ * Shown in Zalo / Messenger / … where Google sign-in can't finish: what to do
+ * if the "open in Chrome" button doesn't work.
+ */
+function InAppBrowserNotice({
+  appName,
+  browser,
+}: {
+  appName: string
+  browser: string | null
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+      <p className="font-medium">Bạn đang mở web trong {appName}</p>
+      <p className="text-muted-foreground">
+        Google không cho đăng nhập ngay trong {appName}. Bấm nút &quot;Mở bằng{" "}
+        {browser ?? "trình duyệt"}&quot; bên dưới, web sẽ mở sang{" "}
+        {browser ?? "trình duyệt"} rồi đăng nhập ở đó.
+      </p>
+      <p className="text-muted-foreground">
+        Không mở được? Bấm dấu ⋯ ở góc trên bên phải, chọn &quot;Mở bằng trình
+        duyệt&quot;, hoặc sao chép link rồi dán vào {browser ?? "trình duyệt"}.
+      </p>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="self-start"
+        onClick={copyCurrentLink}
+      >
+        <CopyIcon />
+        Sao chép link
+      </Button>
+    </div>
+  )
+}
+
 export function LoginForm({
   className,
   redirectTo = "/dashboard",
@@ -38,8 +114,23 @@ export function LoginForm({
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
+  const userAgent = useUserAgent()
+  const inAppName = userAgent ? inAppBrowserName(userAgent) : null
+  const systemBrowser = userAgent ? systemBrowserName(userAgent) : null
 
   const isLogin = mode === "login"
+
+  // a phone's redirect sign-in (handleGoogleSignIn) lands back on this page
+  useEffect(() => {
+    getGoogleRedirectResult()
+      .then(async (credential) => {
+        if (!credential) return
+        await ensureUserProfile(credential.user)
+        toast.success("Đăng nhập thành công")
+        router.push(redirectTo)
+      })
+      .catch((error) => toast.error(getAuthErrorMessage(error)))
+  }, [redirectTo, router])
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -59,7 +150,27 @@ export function LoginForm({
   }
 
   async function handleGoogleSignIn() {
+    // inside Zalo & co. the Google flow can't finish — reopen this same page
+    // (with its ?redirect) in the system browser and sign in there
+    const external =
+      inAppName && userAgent
+        ? systemBrowserUrl(new URL(window.location.href), userAgent)
+        : null
+    if (external) {
+      window.location.href = external
+      return
+    }
     setLoading(true)
+    if (systemBrowser) {
+      // a phone: sign in in this same tab, not a popup
+      try {
+        await signInWithGoogleRedirect()
+      } catch (error) {
+        toast.error(getAuthErrorMessage(error))
+        setLoading(false)
+      }
+      return
+    }
     try {
       const credential = await signInWithGoogle()
       await ensureUserProfile(credential.user)
@@ -101,6 +212,9 @@ export function LoginForm({
                     : "Đăng ký để bắt đầu sử dụng dashboard"}
                 </p>
               </div>
+              {inAppName ? (
+                <InAppBrowserNotice appName={inAppName} browser={systemBrowser} />
+              ) : null}
               <Field>
                 <FieldLabel htmlFor="email">Email</FieldLabel>
                 <Input
@@ -154,7 +268,9 @@ export function LoginForm({
                       fill="currentColor"
                     />
                   </svg>
-                  Đăng nhập với Google
+                  {inAppName && systemBrowser
+                    ? `Mở bằng ${systemBrowser} để đăng nhập Google`
+                    : "Đăng nhập với Google"}
                 </Button>
               </Field>
               <FieldDescription className="text-center">
