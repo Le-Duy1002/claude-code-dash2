@@ -545,22 +545,127 @@ export function sumRevenue(
   return out
 }
 
-/** Debt payments grouped by the month the debt is from, oldest month first. */
-export function debtByMonth(
-  receipts: CskhReceipt[]
-): { month: string | null; amount: number; count: number }[] {
-  const map = new Map<string, { amount: number; count: number }>()
-  for (const r of receipts) {
-    if (r.kind !== "no") continue
-    const key = r.debtMonth ?? ""
-    const row = map.get(key) ?? { amount: 0, count: 0 }
-    row.amount += r.amount
-    row.count += 1
-    map.set(key, row)
+/** Months from `from` to `to`, both `YYYY-MM`. */
+function monthsBetween(from: string, to: string): number {
+  const [fy, fm] = from.split("-").map(Number)
+  const [ty, tm] = to.split("-").map(Number)
+  return (ty - fy) * 12 + (tm - fm)
+}
+
+/** `"2026-09"` + 2 → `"2026-11"`. */
+export function addMonths(month: string, n: number): string {
+  const [y, m] = month.split("-").map(Number)
+  const i = y * 12 + m - 1 + n
+  return `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`
+}
+
+/** Debt paid this many months after its month, or later, shares one column. */
+export const DEBT_LAG_CAP = 6
+
+/**
+ * Months after its debt month a debt payment came in, uncapped: 0 = the same
+ * month. A debt month after the payment (a data-entry slip) counts as 0; null
+ * when the debt month is unknown.
+ */
+function exactDebtLag(
+  receipt: Pick<CskhPayment, "date" | "debtMonth">
+): number | null {
+  if (!receipt.debtMonth) return null
+  const paidMonth = receipt.date.slice(0, 7)
+  return Math.max(0, monthsBetween(receipt.debtMonth, paidMonth))
+}
+
+/** A debt payment's "thu về sau mấy tháng" column, capped at DEBT_LAG_CAP. */
+export function debtLag(
+  receipt: Pick<CskhPayment, "date" | "debtMonth">
+): number | null {
+  const lag = exactDebtLag(receipt)
+  return lag == null ? null : Math.min(DEBT_LAG_CAP, lag)
+}
+
+export function debtLagLabel(lag: number): string {
+  if (lag === 0) return "Cùng tháng"
+  if (lag >= DEBT_LAG_CAP) return `Sau ${DEBT_LAG_CAP}+ tháng`
+  return `Sau ${lag} tháng`
+}
+
+/** One debt month: how long after it its debt came in, and what is left. */
+export type CskhDebtMonthRow = {
+  /** `YYYY-MM` the debt is from; null when it wasn't recorded */
+  month: string | null
+  /** debtLag → amount */
+  paidByLag: Record<number, number>
+  paid: number
+  /** Σ amount × exact months after, for the amount-weighted average */
+  lagMonths: number
+  /** number of debt payments */
+  count: number
+  /** still owed now by this month's customers (only those with a giá bản luận) */
+  owing: number
+}
+
+/**
+ * Nợ theo tháng × thu về sau mấy tháng (user, 30/10/2026): for each debt
+ * month, the debt payments received on `dates` split by how many months
+ * after the debt month they came in, plus what that month's customers still
+ * owe today. `lags` are the columns, 0 up to the latest one seen; rows are
+ * oldest debt month first, unknown last.
+ */
+export function debtMonthTable(
+  customers: CskhCustomer[],
+  dates: string[]
+): { lags: number[]; rows: CskhDebtMonthRow[] } {
+  const byKey = new Map<string, CskhDebtMonthRow>()
+  const rowOf = (month: string | null) => {
+    const key = month ?? ""
+    let row = byKey.get(key)
+    if (!row) {
+      row = { month, paidByLag: {}, paid: 0, lagMonths: 0, count: 0, owing: 0 }
+      byKey.set(key, row)
+    }
+    return row
   }
-  return [...map]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([month, row]) => ({ month: month || null, ...row }))
+
+  let maxLag = 0
+  for (const r of receiptsIn(customers, dates)) {
+    if (r.kind !== "no") continue
+    const row = rowOf(r.debtMonth)
+    row.paid += r.amount
+    row.count += 1
+    const exact = exactDebtLag(r)
+    if (exact == null) continue
+    const lag = Math.min(DEBT_LAG_CAP, exact)
+    row.paidByLag[lag] = (row.paidByLag[lag] ?? 0) + r.amount
+    row.lagMonths += r.amount * exact
+    maxLag = Math.max(maxLag, lag)
+  }
+  for (const c of customers) {
+    const due = outstanding(c)
+    if (due) rowOf(defaultDebtMonth(c)).owing += due
+  }
+
+  const rows = [...byKey.values()].sort((a, b) =>
+    a.month == null ? 1 : b.month == null ? -1 : a.month.localeCompare(b.month)
+  )
+  return { lags: Array.from({ length: maxLag + 1 }, (_, i) => i), rows }
+}
+
+/**
+ * Amount-weighted average months after the debt month the money came in,
+ * over `rows` with a known debt month; null when nothing was collected.
+ */
+export function averageDebtLag(rows: CskhDebtMonthRow[]): number | null {
+  const known = rows.filter((r) => r.month != null)
+  const paid = known.reduce((s, r) => s + r.paid, 0)
+  if (paid === 0) return null
+  return known.reduce((s, r) => s + r.lagMonths, 0) / paid
+}
+
+/** `0.6` → `"0,6 tháng"`. */
+export function formatLagMonths(months: number | null): string {
+  if (months == null) return "—"
+  const n = months.toLocaleString("vi-VN", { maximumFractionDigits: 1 })
+  return `${n} tháng`
 }
 
 // ------------------------------------------------------------ time tree
