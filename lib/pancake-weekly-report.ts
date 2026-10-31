@@ -9,9 +9,12 @@ import {
   vnDayRange,
 } from "@/features/pancake/types"
 import {
+  comparePeriods,
   datesBetween,
+  daysInclusive,
   formatDmy,
   reportPeriods,
+  type DateRange,
   type ReportPeriod,
 } from "@/features/reports/types"
 import {
@@ -184,11 +187,15 @@ async function pageDays(
   return { rows, warnings }
 }
 
-/** Reads every POS page for `[from, to]` (Vietnam days, inclusive). */
+/**
+ * Reads every POS page for `[from, to]` (Vietnam days, inclusive), summed
+ * per `periods` (default: 7-day weeks from `from`, then the whole range).
+ */
 export async function buildPancakeWeeklyReport(
   from: string,
   to: string,
-  deadlineMs: number
+  deadlineMs: number,
+  periods: ReportPeriod[] = reportPeriods(from, to)
 ): Promise<PancakeWeeklyReport> {
   const shops = pancakeShops().filter((s) => s.fbPageId)
   if (shops.length === 0) throw new Error("Chưa cấu hình page Pancake nào (PANCAKE_POS_*).")
@@ -200,10 +207,31 @@ export async function buildPancakeWeeklyReport(
     to,
     pages: shops.map((s) => s.name),
     daily: results.flatMap((r) => r.rows),
-    periods: reportPeriods(from, to),
+    periods,
     fetchedAtMs: Date.now(),
     warnings: results.flatMap((r) => r.warnings),
   }
+}
+
+/**
+ * The same figures for two ranges side by side. Pancake is read once, from
+ * the earlier range's first day to the later one's last — the order and
+ * conversation walks go back to the earliest day either way — and each
+ * range is summed from those days; `periods` holds the two ranges.
+ */
+export async function buildPancakeCompareReport(
+  first: DateRange,
+  second: DateRange,
+  deadlineMs: number
+): Promise<PancakeWeeklyReport> {
+  const from = first.from < second.from ? first.from : second.from
+  const to = first.to > second.to ? first.to : second.to
+  return buildPancakeWeeklyReport(
+    from,
+    to,
+    deadlineMs,
+    comparePeriods(first, second)
+  )
 }
 
 // ------------------------------------------------------------ workbook
@@ -348,6 +376,18 @@ export async function pancakeWeeklyWorkbook(
     r += 1
   }
 
+  writeNotes(ss, r, [
+    "• Mỗi tuần là 7 ngày liên tiếp tính từ ngày bắt đầu. Số từng ngày ở sheet \"Theo ngày\".",
+    ...report.warnings.map((w) => `⚠ ${w}`),
+  ])
+  ss.views = [{ state: "normal", showGridLines: false }]
+
+  addDailySheet(wb, report, report.daily)
+  return Buffer.from(await wb.xlsx.writeBuffer())
+}
+
+/** "Ghi chú cách tính" from row `startRow` down, then `extra` lines. */
+function writeNotes(ws: ExcelJS.Worksheet, startRow: number, extra: string[]) {
   const notes = [
     "Ghi chú cách tính",
     "• Mes thu về = \"Hội thoại mới\" (new_inbox_count) trong Thống kê › Trang của Pancake.",
@@ -357,24 +397,29 @@ export async function pancakeWeeklyWorkbook(
     "• Đơn chốt demo = tổng thẻ Hà Chốt + Duy Chốt + Thương Chốt + QChốt; Demo đã xem = tổng thẻ HDemo + DDemo + TDemo + QDemo.",
     "   Cả hai lấy từ thống kê \"Thẻ hội thoại\" của Pancake (số lần gắn − gỡ thẻ trong ngày), cùng nguồn với mục Demo trên dashboard.",
     "• Tỉ lệ chốt demo tổng team = đơn chốt demo / demo đã xem · Tỉ lệ chốt tổng = đơn chốt / mes thu về.",
-    "• Mỗi tuần là 7 ngày liên tiếp tính từ ngày bắt đầu. Số từng ngày ở sheet \"Theo ngày\".",
-    ...report.warnings.map((w) => `⚠ ${w}`),
+    ...extra,
   ]
   notes.forEach((text, i) => {
-    const cell = ss.getCell(`A${r + i}`)
+    const cell = ws.getCell(`A${startRow + i}`)
     cell.value = text
     cell.font = i === 0 ? { bold: true } : { color: { argb: "FF404040" } }
   })
-  ss.views = [{ state: "normal", showGridLines: false }]
+}
 
-  // ---- Theo ngày
+/** Sheet "Theo ngày": one row per day and page. */
+function addDailySheet(
+  wb: ExcelJS.Workbook,
+  report: PancakeWeeklyReport,
+  rows: WeeklyDayRow[]
+) {
+  const { pages } = report
   const ds = wb.addWorksheet("Theo ngày")
   ds.columns = DAILY_COLUMNS.map(({ header, key, width }) => ({
     header,
     key,
     width,
   }))
-  const sorted = [...report.daily].sort(
+  const sorted = [...rows].sort(
     (a, b) =>
       a.date.localeCompare(b.date) || pages.indexOf(a.page) - pages.indexOf(b.page)
   )
@@ -390,6 +435,158 @@ export async function pancakeWeeklyWorkbook(
   })
   ds.views = [{ state: "frozen", ySplit: 1 }]
   ds.eachRow((row) => row.eachCell((cell) => (cell.border = BORDER)))
+}
 
+const UP_COLOR = "FF1E7B34"
+const DOWN_COLOR = "FFC00000"
+
+/**
+ * The comparison as an .xlsx: per page and combined, each metric for
+ * khoảng 1 and khoảng 2, the change (khoảng 2 − khoảng 1; for a rate in
+ * percentage points) and the % change. When the two ranges differ in
+ * length, mes and đơn chốt are also compared per day.
+ */
+export async function pancakeCompareWorkbook(
+  report: PancakeWeeklyReport
+): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook()
+  wb.creator = "Dashboard Hẻm"
+  const { pages } = report
+  const [first, second] = report.periods
+  const groups = pages.length > 1 ? [...pages, "Chung các page"] : pages
+  const pagesOf = (i: number) => (i < pages.length ? [pages[i]] : pages)
+  const len1 = daysInclusive(first.from, first.to)
+  const len2 = daysInclusive(second.from, second.to)
+
+  type Row = {
+    label: string
+    value: (pages: string[], period: ReportPeriod) => number | null
+    rate?: boolean
+    decimals?: boolean
+    /** context, not a result: no % change, no up/down colour */
+    plain?: boolean
+  }
+  const rows: Row[] = [
+    { label: "Số ngày", plain: true, value: (_, p) => daysInclusive(p.from, p.to) },
+    ...METRICS.map((metric): Row =>
+      "field" in metric
+        ? {
+            label: metric.label,
+            value: (g, p) => sumOf(report, metric.field, g, p),
+          }
+        : {
+            label: metric.label,
+            rate: true,
+            value: (g, p) => {
+              const [num, den] = metric.rate
+              const d = sumOf(report, den, g, p)
+              return d > 0 ? sumOf(report, num, g, p) / d : null
+            },
+          }
+    ),
+  ]
+  if (len1 !== len2) {
+    for (const [label, field] of [
+      ["Mes thu về trung bình mỗi ngày", "mes"],
+      ["Đơn chốt trung bình mỗi ngày", "orders"],
+    ] as const) {
+      rows.push({
+        label,
+        decimals: true,
+        value: (g, p) => sumOf(report, field, g, p) / daysInclusive(p.from, p.to),
+      })
+    }
+  }
+
+  const ss = wb.addWorksheet("So sánh")
+  ss.columns = [{ width: 58 }, { width: 20 }, { width: 20 }, { width: 15 }, { width: 13 }]
+  ss.getCell("A1").value = `So sánh Pancake — ${pages.join(" & ")}`
+  ss.getCell("A1").font = { bold: true, size: 14 }
+  ss.getCell("A2").value = `${first.title} với ${second.title} · số liệu lấy lúc ${fetchedLabel(report.fetchedAtMs)}`
+  ss.getCell("A2").font = { italic: true, color: { argb: "FF595959" } }
+
+  let r = 4
+  groups.forEach((group, gi) => {
+    const titleRow = ss.getRow(r)
+    titleRow.getCell(1).value = group
+    for (let c = 1; c <= 5; c++) {
+      titleRow.getCell(c).fill = BLOCK_FILL
+      titleRow.getCell(c).font = { bold: true, size: 12 }
+      titleRow.getCell(c).border = BORDER
+    }
+    r += 1
+
+    const head = ss.getRow(r)
+    ;["Chỉ số", first.title, second.title, "Chênh lệch", "% thay đổi"].forEach(
+      (label, i) => {
+        const cell = head.getCell(i + 1)
+        cell.value = label
+        cell.font = { bold: true, color: { argb: "FFFFFFFF" } }
+        cell.fill = HEAD_FILL
+        cell.border = BORDER
+        cell.alignment = { horizontal: i === 0 ? "left" : "center", wrapText: true }
+      }
+    )
+    r += 1
+
+    for (const metric of rows) {
+      const a = metric.value(pagesOf(gi), first)
+      const b = metric.value(pagesOf(gi), second)
+      const diff = a != null && b != null ? b - a : null
+      const pct =
+        !metric.rate && !metric.plain && a && b != null ? (b - a) / a : null
+      const row = ss.getRow(r)
+      row.getCell(1).value = metric.label
+      row.getCell(2).value = a ?? "-"
+      row.getCell(3).value = b ?? "-"
+      // a rate's change is in percentage points: 0.034 shows as "+3.4 điểm"
+      row.getCell(4).value =
+        diff == null ? "-" : metric.rate ? diff * 100 : diff
+      row.getCell(5).value = pct ?? "-"
+      const valueFormat = metric.rate ? "0.0%" : metric.decimals ? "#,##0.0" : "#,##0"
+      row.getCell(2).numFmt = valueFormat
+      row.getCell(3).numFmt = valueFormat
+      row.getCell(4).numFmt = metric.rate
+        ? '+0.0" điểm";-0.0" điểm";0'
+        : metric.decimals
+          ? "+#,##0.0;-#,##0.0;0"
+          : "+#,##0;-#,##0;0"
+      row.getCell(5).numFmt = "+0.0%;-0.0%;0.0%"
+      if (diff && !metric.plain) {
+        const color = diff > 0 ? UP_COLOR : DOWN_COLOR
+        row.getCell(4).font = { bold: true, color: { argb: color } }
+        row.getCell(5).font = { color: { argb: color } }
+      }
+      for (let c = 1; c <= 5; c++) {
+        row.getCell(c).border = BORDER
+        if (c > 1) row.getCell(c).alignment = { horizontal: "center" }
+        if (metric.rate) row.getCell(c).fill = RATE_FILL
+      }
+      if (metric.rate) row.getCell(1).font = { bold: true }
+      r += 1
+    }
+    r += 1
+  })
+
+  writeNotes(ss, r, [
+    "• Chênh lệch = khoảng 2 − khoảng 1 (xanh: tăng, đỏ: giảm); với tỉ lệ, chênh lệch tính bằng điểm %.",
+    ...(len1 !== len2
+      ? [
+          `• Hai khoảng dài khác nhau (${len1} và ${len2} ngày) — tổng số không so được trực tiếp, xem thêm các dòng trung bình mỗi ngày.`,
+        ]
+      : []),
+    "• Số từng ngày của cả hai khoảng ở sheet \"Theo ngày\".",
+    ...report.warnings.map((w) => `⚠ ${w}`),
+  ])
+  ss.views = [{ state: "normal", showGridLines: false }]
+
+  const inRange = (date: string) =>
+    (date >= first.from && date <= first.to) ||
+    (date >= second.from && date <= second.to)
+  addDailySheet(
+    wb,
+    report,
+    report.daily.filter((row) => inRange(row.date))
+  )
   return Buffer.from(await wb.xlsx.writeBuffer())
 }

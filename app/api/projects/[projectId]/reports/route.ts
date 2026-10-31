@@ -2,14 +2,19 @@ import { NextResponse } from "next/server"
 
 import { getRequestUser } from "@/lib/firebase-admin"
 import {
+  buildPancakeCompareReport,
   buildPancakeWeeklyReport,
+  pancakeCompareWorkbook,
   pancakeWeeklyWorkbook,
 } from "@/lib/pancake-weekly-report"
 import { saveProjectReport } from "@/lib/project-drive"
 import {
+  compareFileName,
+  compareRangeError,
   isReportKind,
   reportFileName,
   reportRangeError,
+  type DateRange,
   type ReportExportResult,
 } from "@/features/reports/types"
 
@@ -17,12 +22,18 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 300
 
+function asRange(value: unknown): DateRange {
+  const r = (value ?? {}) as { from?: unknown; to?: unknown }
+  return { from: String(r.from ?? ""), to: String(r.to ?? "") }
+}
+
 /**
- * Xuất báo cáo: builds one report template for `[from, to]` from live
- * Pancake data and saves it into the project's Drive folder as a Google
- * Sheet.
+ * Xuất báo cáo: builds one report template from live Pancake data and saves
+ * it into the project's Drive folder as a Google Sheet.
  *
  *   POST /api/projects/<id>/reports  { kind: "pancake-weekly", from, to }
+ *   POST /api/projects/<id>/reports  { kind: "pancake-compare",
+ *                                      first: { from, to }, second: { from, to } }
  */
 export async function POST(
   request: Request,
@@ -37,33 +48,48 @@ export async function POST(
     kind?: unknown
     from?: unknown
     to?: unknown
+    first?: unknown
+    second?: unknown
   }
   if (!isReportKind(body.kind)) {
     return NextResponse.json({ error: "Loại báo cáo không hợp lệ" }, { status: 400 })
   }
+  const kind = body.kind
+  const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)
+  const first = asRange(body.first)
+  const second = asRange(body.second)
   const from = String(body.from ?? "")
   const to = String(body.to ?? "")
-  const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)
-  const rangeError = reportRangeError(from, to, today)
+  const rangeError =
+    kind === "pancake-compare"
+      ? compareRangeError(first, second, today)
+      : reportRangeError(from, to, today)
   if (rangeError) {
     return NextResponse.json({ error: rangeError }, { status: 400 })
   }
 
   try {
-    const report = await buildPancakeWeeklyReport(
-      from,
-      to,
-      Date.now() + 200_000
-    )
-    const buffer = await pancakeWeeklyWorkbook(report)
+    const deadlineMs = Date.now() + 200_000
+    const report =
+      kind === "pancake-compare"
+        ? await buildPancakeCompareReport(first, second, deadlineMs)
+        : await buildPancakeWeeklyReport(from, to, deadlineMs)
+    const buffer =
+      kind === "pancake-compare"
+        ? await pancakeCompareWorkbook(report)
+        : await pancakeWeeklyWorkbook(report)
     const file = await saveProjectReport(
       projectId,
       {
-        name: reportFileName(body.kind, from, to),
+        name:
+          kind === "pancake-compare"
+            ? compareFileName(first, second)
+            : reportFileName(kind, from, to),
         buffer,
-        kind: body.kind,
-        from,
-        to,
+        kind,
+        // for a comparison, the whole stretch both ranges lie in
+        from: report.from,
+        to: report.to,
       },
       user.name || user.email || "Người dùng"
     )

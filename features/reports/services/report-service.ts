@@ -1,6 +1,6 @@
 import { auth } from "@/lib/firebase"
 
-import type { ReportExportResult, ReportKind } from "../types"
+import type { ReportExportResult, ReportRequest } from "../types"
 
 /**
  * Builds a report on the server from live data and saves it as a Google
@@ -8,7 +8,7 @@ import type { ReportExportResult, ReportKind } from "../types"
  */
 export async function exportReport(
   projectId: string,
-  params: { kind: ReportKind; from: string; to: string }
+  params: ReportRequest
 ): Promise<ReportExportResult> {
   const token = await auth.currentUser?.getIdToken()
   if (!token) throw new Error("Chưa đăng nhập")

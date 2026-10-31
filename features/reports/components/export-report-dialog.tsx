@@ -28,12 +28,18 @@ import {
 
 import { exportReport } from "../services/report-service"
 import {
+  COMPARE_MAX_SPAN_DAYS,
   REPORT_KINDS,
   REPORT_MAX_DAYS,
   clampReportRange,
+  compareFileName,
+  compareRangeError,
+  defaultCompareRanges,
   defaultReportRange,
+  previousRange,
   reportFileName,
   reportRangeError,
+  type DateRange,
   type ReportKind,
 } from "../types"
 
@@ -102,8 +108,54 @@ function SimpleSelect({
   )
 }
 
+/** "Từ ngày" / "Đến ngày" for one range, under an optional heading. */
+function RangeFields({
+  id,
+  legend,
+  value,
+  onChange,
+}: {
+  id: string
+  legend?: string
+  value: DateRange
+  onChange: (next: DateRange) => void
+}) {
+  const fields = (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="flex flex-col gap-2">
+        <Label htmlFor={`${id}-from`}>Từ ngày</Label>
+        <Input
+          id={`${id}-from`}
+          type="date"
+          max={todayVn()}
+          value={value.from}
+          onChange={(e) => onChange({ ...value, from: e.target.value })}
+        />
+      </div>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor={`${id}-to`}>Đến ngày</Label>
+        <Input
+          id={`${id}-to`}
+          type="date"
+          max={todayVn()}
+          value={value.to}
+          onChange={(e) => onChange({ ...value, to: e.target.value })}
+        />
+      </div>
+    </div>
+  )
+  if (!legend) return fields
+  return (
+    <fieldset className="flex flex-col gap-2 rounded-lg border p-3">
+      <legend className="px-1 text-sm font-medium">{legend}</legend>
+      {fields}
+    </fieldset>
+  )
+}
+
 /**
- * "Xuất báo cáo": pick a report template, a date range, then where to save —
+ * "Xuất báo cáo": pick a report template, a date range (two, to compare),
+ * then where to save —
  * a big project and, inside it, one of its sub-projects (or the big project
  * itself). The server builds the file from live data and puts it into that
  * project's Drive folder as a Google Sheet. Each open starts from
@@ -122,6 +174,9 @@ export function ExportReportDialog({
   const [open, setOpen] = React.useState(false)
   const [kind, setKind] = React.useState<ReportKind>(REPORT_KINDS[0].value)
   const [range, setRange] = React.useState(() => defaultReportRange(todayVn()))
+  const [compare, setCompare] = React.useState(() =>
+    defaultCompareRanges(todayVn())
+  )
   const [projectId, setProjectId] = React.useState("")
   const [subId, setSubId] = React.useState(NO_SUB)
   const [pending, setPending] = React.useState(false)
@@ -152,14 +207,22 @@ export function ExportReportDialog({
     setSubId(targets.find((t) => t.parentId === id)?.id ?? NO_SUB)
   }
 
-  const rangeError = reportRangeError(range.from, range.to, todayVn())
+  const comparing = kind === "pancake-compare"
+  const rangeError = comparing
+    ? compareRangeError(compare.first, compare.second, todayVn())
+    : reportRangeError(range.from, range.to, todayVn())
   const kindInfo = REPORT_KINDS.find((k) => k.value === kind)!
 
   async function handleExport() {
     if (!target || rangeError) return
     setPending(true)
     try {
-      const result = await exportReport(target.id, { kind, ...range })
+      const result = await exportReport(
+        target.id,
+        comparing
+          ? { kind: "pancake-compare", ...compare }
+          : { kind: "pancake-weekly", ...range }
+      )
       rememberTarget(target.id)
       toast.success(`Đã lưu "${result.name}" vào ${targetPath}.`, {
         description: result.warnings.length
@@ -192,11 +255,12 @@ export function ExportReportDialog({
               ? last
               : (defaultTargetId ?? targets[0]?.id)
           )
-          setRange(
-            initialRange
-              ? clampReportRange(initialRange.from, initialRange.to, todayVn())
-              : defaultReportRange(todayVn())
-          )
+          const pageRange = initialRange
+            ? clampReportRange(initialRange.from, initialRange.to, todayVn())
+            : undefined
+          setRange(pageRange ?? defaultReportRange(todayVn()))
+          // comparing: the page's range against the same days right before it
+          setCompare(defaultCompareRanges(todayVn(), pageRange))
         }
         setOpen(next)
       }}
@@ -226,26 +290,35 @@ export function ExportReportDialog({
             <p className="text-xs text-muted-foreground">{kindInfo.description}</p>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="report-from">Từ ngày</Label>
-              <Input
-                id="report-from"
-                type="date"
-                value={range.from}
-                onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
+          {comparing ? (
+            <div className="flex flex-col gap-3">
+              <RangeFields
+                id="report-first"
+                legend="Khoảng 1"
+                value={compare.first}
+                onChange={(first) => setCompare((c) => ({ ...c, first }))}
               />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="report-to">Đến ngày</Label>
-              <Input
-                id="report-to"
-                type="date"
-                value={range.to}
-                onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
+              <RangeFields
+                id="report-second"
+                legend="Khoảng 2 — so với khoảng 1"
+                value={compare.second}
+                onChange={(second) => setCompare((c) => ({ ...c, second }))}
               />
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto self-start p-0"
+                onClick={() =>
+                  setCompare((c) => ({ ...c, first: previousRange(c.second) }))
+                }
+              >
+                Đặt khoảng 1 = cùng số ngày ngay trước khoảng 2
+              </Button>
             </div>
-          </div>
+          ) : (
+            <RangeFields id="report" value={range} onChange={setRange} />
+          )}
 
           {top ? (
             <div className="flex flex-col gap-2">
@@ -304,8 +377,9 @@ export function ExportReportDialog({
             <p className="text-sm text-destructive">{rangeError}</p>
           ) : (
             <p className="text-xs text-muted-foreground">
-              Tên file: {reportFileName(kind, range.from, range.to)} · tối đa{" "}
-              {REPORT_MAX_DAYS} ngày mỗi lần xuất.
+              {comparing
+                ? `Tên file: ${compareFileName(compare.first, compare.second)} · mỗi khoảng tối đa ${REPORT_MAX_DAYS} ngày, cả hai nằm trong ${COMPARE_MAX_SPAN_DAYS} ngày.`
+                : `Tên file: ${reportFileName(kind, range.from, range.to)} · tối đa ${REPORT_MAX_DAYS} ngày mỗi lần xuất.`}
               {pending ? " Đang lấy số liệu Pancake, có thể mất 1–2 phút…" : ""}
             </p>
           )}
