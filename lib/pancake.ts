@@ -5,7 +5,8 @@ import "server-only"
  *
  * Two products, two auth schemes (see `.env.local`):
  *   POS   — `pos.pages.fm/api/v1`, one `api_key` per shop. Orders, customers,
- *           shop staff.
+ *           shop staff. A shop the account itself belongs to also answers
+ *           the inbox `access_token` (Hẻm Dưỡng Con has no api_key set).
  *   INBOX — `pages.fm/api/v1`, one account `access_token` covering every page.
  *           Conversations, conversation tags, messages.
  *
@@ -23,7 +24,7 @@ const INBOX_TOKEN = process.env.PANCAKE_INBOX_ACCESS_TOKEN ?? ""
 export type PancakeShop = {
   /** Human label, e.g. "Hẻm Tarot". */
   name: string
-  /** POS api_key (also identifies the shop server-side). */
+  /** POS api_key (also identifies the shop server-side); "" = use the inbox access_token. */
   apiKey: string
   /** POS shop id, e.g. "4681569". */
   shopId: string
@@ -31,16 +32,25 @@ export type PancakeShop = {
   fbPageId: string
 }
 
-/** The POS shops configured in the environment (`PANCAKE_POS_1..3_*`). */
+/**
+ * The POS shops configured in the environment (`PANCAKE_POS_1..3_*`). A shop
+ * without `_API_KEY` is read with the inbox access_token instead.
+ */
 export function pancakeShops(): PancakeShop[] {
   return [1, 2, 3]
     .map((n) => ({
-      name: process.env[`PANCAKE_POS_${n}_NAME`] ?? `Shop ${n}`,
+      name: process.env[`PANCAKE_POS_${n}_NAME`] || `Shop ${n}`,
       apiKey: process.env[`PANCAKE_POS_${n}_API_KEY`] ?? "",
       shopId: process.env[`PANCAKE_POS_${n}_SHOP_ID`] ?? "",
       fbPageId: process.env[`PANCAKE_POS_${n}_FB_PAGE_ID`] ?? "",
     }))
-    .filter((shop) => shop.apiKey && shop.shopId)
+    .filter((shop) => shop.shopId && (shop.apiKey || INBOX_TOKEN))
+}
+
+/** `api_key` when the shop has one, else the inbox `access_token`. */
+function setPosAuth(url: URL, shop: PancakeShop): void {
+  if (shop.apiKey) url.searchParams.set("api_key", shop.apiKey)
+  else url.searchParams.set("access_token", INBOX_TOKEN)
 }
 
 /** A Facebook page the CS team works — a POS shop, or inbox-only. */
@@ -49,6 +59,7 @@ export type PancakePage = {
   fbPageId: string
   /** null for inbox-only pages (no POS shop / order data) */
   shopId: string | null
+  /** null for inbox-only pages; "" for a shop read with the inbox token */
   apiKey: string | null
 }
 
@@ -251,7 +262,7 @@ export async function fetchOrdersSince(
   for (let i = 0; i < maxPages; i += 1) {
     if (Date.now() >= deadlineMs) break
     const url = new URL(`${POS_BASE}/shops/${shop.shopId}/orders`)
-    url.searchParams.set("api_key", shop.apiKey)
+    setPosAuth(url, shop)
     url.searchParams.set("page_number", String(page))
     url.searchParams.set("page_size", String(pageSize))
     const body = await getJson<{ data?: Record<string, unknown>[] }>(url.toString())
@@ -303,7 +314,7 @@ export type PancakeStaff = { id: string; name: string; department: string | null
 
 export async function fetchShopStaff(shop: PancakeShop): Promise<PancakeStaff[]> {
   const url = new URL(`${POS_BASE}/shops/${shop.shopId}/users`)
-  url.searchParams.set("api_key", shop.apiKey)
+  setPosAuth(url, shop)
   const body = await getJson<{ data?: Record<string, unknown>[] }>(url.toString())
   return (body.data ?? []).map((row) => {
     const user = (row.user ?? {}) as Record<string, unknown>
@@ -680,22 +691,28 @@ async function postTagStatistics(
   const boundary = "----pancakeDashTagStats"
   const body = `--${boundary}\r\nContent-Disposition: form-data; name="page_ids"\r\n\r\n${fbPageId}\r\n--${boundary}--\r\n`
 
-  const res = await fetch(url.toString(), {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      "content-type": `multipart/form-data; boundary=${boundary}`,
-    },
-    body,
-    cache: "no-store",
-  })
-  const json = (await res.json().catch(() => null)) as TagStatsResponse | null
-  if (!res.ok || !json?.success) {
-    throw new Error(
-      `Pancake ${res.status} pancake.vn/statistics/tags — ${json?.message ?? "lỗi không rõ"}`
-    )
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": `multipart/form-data; boundary=${boundary}`,
+      },
+      body,
+      cache: "no-store",
+    })
+    if (res.status === 429 && attempt < 3) {
+      await sleep(1200 * (attempt + 1))
+      continue
+    }
+    const json = (await res.json().catch(() => null)) as TagStatsResponse | null
+    if (!res.ok || !json?.success) {
+      throw new Error(
+        `Pancake ${res.status} pancake.vn/statistics/tags — ${json?.message ?? "lỗi không rõ"}`
+      )
+    }
+    return json
   }
-  return json
 }
 
 /** A tag's rows in `series` — see the note in `fetchWebTagStatistics`. */
@@ -743,20 +760,24 @@ export async function fetchWebTagStatistics(
 }> {
   const json = await postTagStatistics(fbPageId, fromISO, toISO, "day")
 
-  const n = json.data?.categories?.length ?? 0
-  const dates: string[] = []
-  {
-    // `categories` is always consecutive days from fromISO to toISO, oldest
-    // first — walk the range ourselves rather than parsing "DD/MM" labels
-    // (no year, same ambiguity `fetchWebPageStatistics` avoids).
-    let cursor = fromISO
-    for (let i = 0; i < n; i += 1) {
-      dates.push(cursor)
-      const [y, m, d] = cursor.split("-").map(Number)
-      const next = new Date(Date.UTC(y, m - 1, d + 1))
-      cursor = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`
-    }
+  // `categories` are "DD/MM" labels, oldest first, and a day Pancake has
+  // nothing for is left out (Hẻm Dưỡng Con 28/09–01/10/2026), so each label
+  // is matched to its day inside the range instead of counted off from
+  // fromISO. The labels carry no year, which the range supplies.
+  const dayOfLabel = new Map<string, string>()
+  for (let cursor = fromISO; cursor <= toISO; ) {
+    dayOfLabel.set(`${cursor.slice(8, 10)}/${cursor.slice(5, 7)}`, cursor)
+    const [y, m, d] = cursor.split("-").map(Number)
+    cursor = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10)
   }
+  const dates: string[] = []
+  const index: number[] = []
+  ;(json.data?.categories ?? []).forEach((label, i) => {
+    const date = dayOfLabel.get(label.trim().slice(0, 5))
+    if (!date) return
+    dates.push(date)
+    index.push(i)
+  })
 
   const series = json.data?.series ?? {}
   const totalsByTagId: Record<string, number[]> = {}
@@ -770,7 +791,7 @@ export async function fetchWebTagStatistics(
     // plain "<id>" key exists too but is always zero — not documented
     // anywhere, just observed, so fall back to it defensively.
     const rows = tagSeriesRows(series, id)
-    totalsByTagId[id] = dates.map((_, i) => Number(rows[i]?.total ?? 0))
+    totalsByTagId[id] = index.map((i) => Number(rows[i]?.total ?? 0))
   }
 
   return { dates, totalsByTagId, tagText, tagLabel }

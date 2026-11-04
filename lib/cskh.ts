@@ -6,6 +6,7 @@ import { adminDb } from "@/lib/firebase-admin"
 import {
   fetchConversation,
   fetchConversationsSince,
+  fetchPageTags,
   fetchWebTagHourly,
   fetchWebTagStatistics,
   searchConversations,
@@ -13,7 +14,10 @@ import {
 } from "@/lib/pancake"
 import {
   CSKH_CLOSED_TAG,
+  CSKH_OLD_PAGE_ID,
+  CSKH_OLD_PAGE_LAST_DAY,
   CSKH_PAGE_ID,
+  CSKH_PAGE_IDS,
   CSKH_STAFF,
   ISO_DATE,
   ISO_MONTH,
@@ -22,6 +26,7 @@ import {
   isRelevant,
   mapCskhCustomer,
   normTag,
+  pageIdOfConversation,
   parseConversationRef,
   staffKeyFromTags,
   vnDateOf,
@@ -34,9 +39,9 @@ import {
 } from "@/features/cskh/types"
 
 /**
- * Server side of the "Chăm sóc khách hàng" tab (Hẻm Trong Đường page). All
- * Firestore access goes through the Admin SDK, so these collections need no
- * client security rules:
+ * Server side of the "Chăm sóc khách hàng" tab: Hẻm Chữa Lành, and Hẻm Trong
+ * Đường's figures up to `CSKH_OLD_PAGE_LAST_DAY`. All Firestore access goes
+ * through the Admin SDK, so these collections need no client security rules:
  *   cskhCustomers/{conversationId} — one closed customer (see `CskhCustomer`)
  *   cskhBaseline/{autoId}          — `{ ids }`: conversations that already had
  *                                    "Chốt sale" before tracking started
@@ -71,13 +76,12 @@ type CskhState = {
 
 type TagsOf = (tagIds: number[]) => string[]
 
-/** Tag id → text for the page, from Pancake's tag statistics catalogue. */
-async function tagNamer(): Promise<TagsOf> {
-  const today = vnDateOf(Date.now())
-  const { tagLabel } = await fetchWebTagStatistics(CSKH_PAGE_ID, today, today)
+/** Tag id → text for a page, from its tag catalogue. */
+async function tagNamer(pageId: string): Promise<TagsOf> {
+  const catalogue = await fetchPageTags(pageId)
   return (tagIds) =>
     tagIds
-      .map((id) => tagLabel[String(id)])
+      .map((id) => catalogue.get(id)?.text.trim())
       .filter((t): t is string => Boolean(t))
 }
 
@@ -276,6 +280,8 @@ function sameList(a: unknown, b: string[]): boolean {
  * `updated_at` (a tag change bumps it; the 30-min cron sees it soon after).
  * Later runs only refresh a record's tags, name, auto-assigned staff and
  * whether "Chốt sale" is still on it — never the hand-entered fields.
+ * Only the current page is walked. The baseline covers Hẻm Trong Đường, and
+ * every "Chốt sale" on Hẻm Chữa Lành is new: it started after tracking did.
  */
 export async function syncCskhCustomers({
   sinceDays,
@@ -288,7 +294,7 @@ export async function syncCskhCustomers({
   const col = db.collection(CUSTOMERS)
   const stateRef = db.doc(STATE)
   const state = ((await stateRef.get()).data() ?? {}) as CskhState
-  const tagsOf = await tagNamer()
+  const tagsOf = await tagNamer(CSKH_PAGE_ID)
   if (!state.baselineDone) return continueBaseline(state, tagsOf, deadlineMs)
 
   const now = Date.now()
@@ -429,9 +435,33 @@ export async function syncCskhCustomers({
 }
 
 /**
- * Khách xem per day per staff (Pancake's own name-tag counts over `dates`),
- * every record relevant to the range, when khách chốt tracking started, and
- * the last sync time.
+ * Each page's Pancake tag counts over `[from, to]`, one call at a time (the
+ * endpoint answers 429 to a burst) — Hẻm Trong Đường only up to its last day.
+ * A day a page has no data for is absent.
+ */
+async function tagStatsOfPages(from: string, to: string, warnings: string[]) {
+  const out: Awaited<ReturnType<typeof fetchWebTagStatistics>>[] = []
+  for (const pageId of CSKH_PAGE_IDS) {
+    const end =
+      pageId === CSKH_OLD_PAGE_ID && to > CSKH_OLD_PAGE_LAST_DAY
+        ? CSKH_OLD_PAGE_LAST_DAY
+        : to
+    if (from > end) continue
+    try {
+      out.push(await fetchWebTagStatistics(pageId, from, end))
+    } catch (error) {
+      warnings.push(
+        `Không lấy được số tag từ Pancake: ${(error as Error).message}`
+      )
+    }
+  }
+  return out
+}
+
+/**
+ * Khách xem per day per staff (Pancake's own name-tag counts over `dates`,
+ * from `tagStatsOfPages`), every record relevant to the range, when khách
+ * chốt tracking started, and the last sync time.
  */
 export async function readCskhReport(dates: string[]): Promise<{
   views: Record<string, Record<string, number>>
@@ -458,16 +488,15 @@ export async function readCskhReport(dates: string[]): Promise<{
   const from = dates[0]
   const to = dates[dates.length - 1]
 
-  const [stats, customersSnap, stateSnap] = await Promise.all([
-    fetchWebTagStatistics(CSKH_PAGE_ID, from, to).catch((error: Error) => {
-      warnings.push(`Không lấy được số tag từ Pancake: ${error.message}`)
-      return null
-    }),
+  const [statsByPage, customersSnap, stateSnap] = await Promise.all([
+    tagStatsOfPages(from, to, warnings),
     adminDb().collection(CUSTOMERS).get(),
     adminDb().doc(STATE).get(),
   ])
 
-  if (stats) {
+  for (const stats of statsByPage) {
+    // the range is before this page started, or after it stopped
+    if (stats.dates.length === 0) continue
     for (const staff of CSKH_STAFF) {
       const id = Object.keys(stats.tagText).find(
         (tagId) => normTag(stats.tagText[tagId]) === staff.tag
@@ -477,7 +506,9 @@ export async function readCskhReport(dates: string[]): Promise<{
         continue
       }
       stats.dates.forEach((date, i) => {
-        if (views[date]) views[date][staff.key] = stats.totalsByTagId[id][i] ?? 0
+        if (!views[date]) return
+        views[date][staff.key] =
+          (views[date][staff.key] ?? 0) + (stats.totalsByTagId[id][i] ?? 0)
       })
     }
     const closedId = Object.keys(stats.tagText).find(
@@ -485,7 +516,8 @@ export async function readCskhReport(dates: string[]): Promise<{
     )
     if (closedId) {
       stats.dates.forEach((date, i) => {
-        pancakeClosed[date] = stats.totalsByTagId[closedId][i] ?? 0
+        pancakeClosed[date] =
+          (pancakeClosed[date] ?? 0) + (stats.totalsByTagId[closedId][i] ?? 0)
       })
     }
   }
@@ -567,9 +599,11 @@ export async function searchCskhCustomers(
   if (ref) {
     const record = byId.get(ref)
     if (record) return [{ kind: "record", customer: record }]
-    const conv = await fetchConversation(CSKH_PAGE_ID, ref)
+    const pageId = pageIdOfConversation(ref)
+    if (!CSKH_PAGE_IDS.includes(pageId)) return []
+    const conv = await fetchConversation(pageId, ref)
     if (!conv) return []
-    const tags = (await tagNamer())(conv.tagIds)
+    const tags = (await tagNamer(pageId))(conv.tagIds)
     return [
       {
         kind: "pancake",
@@ -590,27 +624,31 @@ export async function searchCskhCustomers(
     .slice(0, SEARCH_LIMIT)
     .map((customer) => ({ kind: "record", customer }))
 
-  const [convs, tagsOf] = await Promise.all([
-    searchConversations(CSKH_PAGE_ID, text).catch(() => []),
-    tagNamer(),
-  ])
-  const pancakeHits: CskhSearchHit[] = convs
+  // old customers paying a debt are on Hẻm Trong Đường, so search both
+  const found = await Promise.all(
+    CSKH_PAGE_IDS.map(async (pageId) => {
+      const [convs, tagsOf] = await Promise.all([
+        searchConversations(pageId, text).catch(() => []),
+        tagNamer(pageId).catch((): TagsOf => () => []),
+      ])
+      return convs.map((conv) => ({ conv, tags: tagsOf(conv.tagIds) }))
+    })
+  )
+  const pancakeHits: CskhSearchHit[] = found
+    .flat()
     .filter(
-      (conv) =>
+      ({ conv }) =>
         !byId.has(conv.id) && foldName(conv.customerName).includes(folded)
     )
     .slice(0, SEARCH_LIMIT)
-    .map((conv) => {
-      const tags = tagsOf(conv.tagIds)
-      return {
-        kind: "pancake",
-        conversationId: conv.id,
-        customerName: conv.customerName,
-        staffKey: staffKeyFromTags(tags),
-        tags,
-        updatedAtMs: conv.updatedAtMs,
-      }
-    })
+    .map(({ conv, tags }) => ({
+      kind: "pancake",
+      conversationId: conv.id,
+      customerName: conv.customerName,
+      staffKey: staffKeyFromTags(tags),
+      tags,
+      updatedAtMs: conv.updatedAtMs,
+    }))
 
   return [...recordHits, ...pancakeHits]
 }
@@ -704,7 +742,9 @@ export async function createCskhDebtor(
     })
   } else {
     await ref.set({
-      pageId: CSKH_PAGE_ID,
+      pageId: conversationId
+        ? pageIdOfConversation(conversationId)
+        : CSKH_PAGE_ID,
       customerName,
       staffKey,
       staffManual: true,

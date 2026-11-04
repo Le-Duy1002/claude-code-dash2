@@ -27,9 +27,9 @@ import { CskhRevenueSheet } from "./cskh-revenue"
 type Sheet = "detail" | "revenue"
 
 /**
- * The "Chăm sóc khách hàng" tab of Chỉ số (page Hẻm Trong Đường): two
- * sheets — Thống kê chi tiết and Thống kê doanh thu — over the page's date
- * range.
+ * The "Chăm sóc khách hàng" tab of Chỉ số (page Hẻm Chữa Lành, Hẻm Trong
+ * Đường before it): two sheets — Thống kê chi tiết and Thống kê doanh thu —
+ * over the page's date range.
  */
 export function CskhSection({
   dateRange,

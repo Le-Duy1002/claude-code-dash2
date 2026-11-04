@@ -148,7 +148,7 @@ export function PageDashboardView() {
       dateRange.to
     )
     if (mode === "cskh") {
-      // re-read the Hẻm Trong Đường conversations back to the range start
+      // re-read the CSKH conversations back to the range start
       const days = Math.ceil((Date.now() - fromMs) / 86_400_000) + 1
       setSyncing("Đang đồng bộ khách chốt…")
       try {
@@ -256,7 +256,7 @@ export function PageDashboardView() {
               ? "Hội thoại mới, đơn chốt, tỉ lệ chốt — lọc theo khoảng thời gian và khung giờ, gộp chung hoặc theo từng trang."
               : mode === "demo"
                 ? "Phễu demo: nhắn đến → cá nhân xem → cá nhân chốt, theo từng người hoặc cả team."
-                : "Chăm sóc khách hàng (Hẻm Trong Đường): khách xem, khách chốt, giá bản luận, đã trả — theo tháng, tuần, ngày và từng nhân viên."}
+                : "Chăm sóc khách hàng (Hẻm Chữa Lành): khách xem, khách chốt, giá bản luận, đã trả — theo tháng, tuần, ngày và từng nhân viên."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

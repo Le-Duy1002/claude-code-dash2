@@ -26,7 +26,7 @@ async function authorize(request: Request): Promise<boolean> {
 const MAX_DAYS = 120
 
 /**
- * Refreshes the Hẻm Trong Đường closed-customer list from Pancake.
+ * Refreshes the CSKH closed-customer list from Pancake.
  *
  *   POST /api/cskh/sync?days=30   -> conversations touched in the last 30 days
  *

@@ -1,6 +1,6 @@
 /**
- * "Chăm sóc khách hàng" — the Hẻm Trong Đường - Xem riêng page. Domain types +
- * pure helpers. No React, no Firebase.
+ * "Chăm sóc khách hàng" — the Hẻm Chữa Lành page, and Hẻm Trong Đường - Xem
+ * riêng before it. Domain types + pure helpers. No React, no Firebase.
  *
  * Definitions (user, 15/10/2026):
  *  - Khách xem (per staff) = Pancake's own daily count of that staff's name
@@ -24,8 +24,32 @@
  *  - AOV = tổng giá bản luận / số khách chốt; tỉ lệ chốt = khách chốt / khách xem.
  */
 
-export const CSKH_PAGE_ID = "107787658355222"
-export const CSKH_PAGE_NAME = "Hẻm Trong Đường - Xem riêng"
+/** The page CSKH works now: Hẻm Chữa Lành, first customers 03/11/2026 21:20. */
+export const CSKH_PAGE_ID = "119794214465325"
+export const CSKH_PAGE_NAME = "Hẻm Chữa Lành (đến 03/11: Hẻm Trong Đường)"
+
+/**
+ * Hẻm Trong Đường - Xem riêng, replaced because it broke (Pancake answers 500
+ * deep in its conversation list). It is no longer synced. Its customers and
+ * their debts stay in the app, and the report still reads its tag figures,
+ * up to `CSKH_OLD_PAGE_LAST_DAY`.
+ */
+export const CSKH_OLD_PAGE_ID = "107787658355222"
+
+/**
+ * Last day Hẻm Trong Đường counts (user, 04/11/2026: Hẻm Chữa Lành from now
+ * on). Tags taken off it afterwards would otherwise read as negative khách
+ * xem, as Thương's −4 did on 04/11.
+ */
+export const CSKH_OLD_PAGE_LAST_DAY = "2026-11-03"
+
+/** Every page a customer can be on, the current one first. */
+export const CSKH_PAGE_IDS = [CSKH_PAGE_ID, CSKH_OLD_PAGE_ID]
+
+/** The page of a Pancake conversation id (`<pageId>_<customer psid>`). */
+export function pageIdOfConversation(conversationId: string): string {
+  return conversationId.split("_")[0]
+}
 
 /** Tag (normalised, see `normTag`) that marks a closed customer. */
 export const CSKH_CLOSED_TAG = "chốt sale"
