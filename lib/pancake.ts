@@ -843,6 +843,113 @@ export async function fetchWebTagHourly(
   return { hours, totalsByTagId, tagText }
 }
 
+type UserStatsResponse = {
+  data?: {
+    /** Pancake user id -> one row per day or hour the user had activity */
+    statistics?: Record<string, { time: string; order_count?: number }[]>
+  }
+  success?: boolean
+  message?: string
+}
+
+/** One `pancake.vn/api/v1/statistics/user` call for a single page. */
+async function postUserOrderStatistics(
+  fbPageId: string,
+  fromISO: string,
+  toISO: string,
+  statisticType: "day" | "hour"
+): Promise<UserStatsResponse> {
+  const dateRange = `${toPancakeDate(fromISO)} 00:00:00 - ${toPancakeDate(toISO)} 23:59:59`
+  const url = new URL("https://pancake.vn/api/v1/statistics/user")
+  url.searchParams.set("date_range", dateRange)
+  url.searchParams.set("statistic_type", statisticType)
+  url.searchParams.set("select_fields", JSON.stringify(["order_count"]))
+  url.searchParams.set("access_token", INBOX_TOKEN)
+
+  const boundary = "----pancakeDashUserStats"
+  const body = `--${boundary}\r\nContent-Disposition: form-data; name="page_ids"\r\n\r\n${fbPageId}\r\n--${boundary}--\r\n`
+
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": `multipart/form-data; boundary=${boundary}`,
+      },
+      body,
+      cache: "no-store",
+    })
+    if (res.status === 429 && attempt < 3) {
+      await sleep(1200 * (attempt + 1))
+      continue
+    }
+    const json = (await res.json().catch(() => null)) as UserStatsResponse | null
+    if (!res.ok || !json?.success) {
+      throw new Error(
+        `Pancake ${res.status} pancake.vn/statistics/user — ${json?.message ?? "lỗi không rõ"}`
+      )
+    }
+    return json
+  }
+}
+
+/** Pancake took 88 days per call and refused 98 ("Invalid date range"). */
+const USER_STATS_MAX_DAYS = 60
+
+function addDays(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number)
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10)
+}
+
+/**
+ * Closed orders per Pancake user on one page: the "Số đơn chốt" column of
+ * Pancake's "Thống kê chi tiết > Nhân viên" table. Keyed by Pancake user id,
+ * for `[fromISO, toISO]` (Vietnam days, inclusive both ends) and Vietnam
+ * hours `[hourFrom, hourTo)`.
+ *
+ * `order_count` reads 0 for everyone unless `select_fields` asks for it. With
+ * it, the users add up to `fetchWebPageStatistics`'s `order_count` exactly
+ * (checked for 09/2026, 10/2026 and 01–05/11/2026 on Hẻm Tarot and Hẻm Huyền
+ * Học). It shares that figure's floor: 0 before `ORDER_COUNT_FLOOR`.
+ *
+ * Hourly rows ("HH:00 DD/MM/YYYY", Vietnam time) add up to the daily ones,
+ * so an hour filter needs no estimate.
+ */
+export async function fetchWebUserOrderCounts(
+  fbPageId: string,
+  fromISO: string,
+  toISO: string,
+  hourFrom = 0,
+  hourTo = 24
+): Promise<Record<string, number>> {
+  const statisticType = hourFrom === 0 && hourTo === 24 ? "day" : "hour"
+  const counts: Record<string, number> = {}
+
+  for (
+    let start = fromISO;
+    start <= toISO;
+    start = addDays(start, USER_STATS_MAX_DAYS)
+  ) {
+    const last = addDays(start, USER_STATS_MAX_DAYS - 1)
+    const json = await postUserOrderStatistics(
+      fbPageId,
+      start,
+      last < toISO ? last : toISO,
+      statisticType
+    )
+    for (const [uid, rows] of Object.entries(json.data?.statistics ?? {})) {
+      for (const row of rows) {
+        if (statisticType === "hour") {
+          const hour = Number(row.time.slice(0, 2))
+          if (hour < hourFrom || hour >= hourTo) continue
+        }
+        counts[uid] = (counts[uid] ?? 0) + Number(row.order_count ?? 0)
+      }
+    }
+  }
+  return counts
+}
+
 // ---------------------------------------------------------- INBOX: messages
 
 export type PancakeMessage = {

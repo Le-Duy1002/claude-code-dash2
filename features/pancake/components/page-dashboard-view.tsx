@@ -31,50 +31,8 @@ import {
 import { resolveReportRange, type PageDashboardReport } from "../types"
 import { DateRangePicker, type RangeValue } from "./date-range-picker"
 import { DemoDashboardSection } from "./demo-dashboard-section"
-
-function formatInt(n: number): string {
-  return n.toLocaleString("vi-VN")
-}
-
-function formatPct(n: number | null): string {
-  return n == null ? "—" : `${n.toFixed(1)}%`
-}
-
-function StatCard({
-  label,
-  value,
-  sub,
-  estimated,
-}: {
-  label: string
-  value: React.ReactNode
-  sub?: React.ReactNode
-  /** some days in range have no Pancake figure yet — value includes a self-estimated part */
-  estimated?: boolean
-}) {
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center gap-2 pb-2">
-        <CardTitle className="text-sm font-normal text-muted-foreground">
-          {label}
-        </CardTitle>
-        {estimated ? (
-          <Badge
-            variant="outline"
-            className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400"
-          >
-            <AlertTriangleIcon className="size-3" />
-            Một phần ước tính
-          </Badge>
-        ) : null}
-      </CardHeader>
-      <CardContent>
-        <p className="text-2xl font-semibold tabular-nums">{value}</p>
-        {sub ? <p className="mt-1 text-xs text-muted-foreground">{sub}</p> : null}
-      </CardContent>
-    </Card>
-  )
-}
+import { StaffOrdersSection } from "./staff-orders-section"
+import { formatInt, formatPct, StatCard } from "./stat-card"
 
 /** fixed categorical order, never reassigned per filter — see dataviz skill */
 const PAGE_CHART_COLORS = [
@@ -379,6 +337,17 @@ export function PageDashboardView() {
               </>
             )}
           </div>
+
+          <StaffOrdersSection
+            dateRange={dateRange}
+            refreshKey={refreshKey}
+            pageId={pageFilter}
+            totalOrders={selected?.ordersClosed ?? 0}
+            totalLoading={loading}
+            totalEstimated={
+              (report?.estimatedDays.ordersClosed.length ?? 0) > 0
+            }
+          />
 
           <Card>
             <CardHeader>
