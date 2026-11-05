@@ -87,6 +87,12 @@ export interface Project {
   updatedAt: number
 }
 
+/** Thư mục Drive có sẵn mà dự án mới dùng luôn, thay vì tạo thư mục mới. */
+export type LinkedDriveFolder = { id: string; name: string; url: string }
+
+/** Lỗi có nội dung dành cho người điền form, hiện nguyên văn trên form. */
+export class ProjectFormError extends Error {}
+
 /** Một bước của "Kiểm tra Drive" (`/api/projects/<id>/drive-check`). */
 export type DriveCheck = {
   key: "account" | "folder" | "write" | "mirror"

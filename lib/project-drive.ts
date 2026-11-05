@@ -4,7 +4,11 @@ import { randomUUID } from "node:crypto"
 
 import { FieldValue } from "firebase-admin/firestore"
 
-import type { DriveCheck, ProjectDriveCheck } from "@/features/projects/types"
+import type {
+  DriveCheck,
+  LinkedDriveFolder,
+  ProjectDriveCheck,
+} from "@/features/projects/types"
 
 import { adminDb } from "./firebase-admin"
 import {
@@ -14,10 +18,12 @@ import {
   deleteProjectFile,
   getChangesStartPageToken,
   getProjectFolder,
+  holdsProjectsParent,
   listFolderTree,
   projectsWriteAccount,
   readerCanSee,
   readerEmail,
+  readerItem,
   shareWithReader,
   stopChannel,
   uploadFileToProjectFolder,
@@ -78,6 +84,64 @@ export async function ensureProjectDriveFolder(
   // watch (no-op locally / until PROJECT_DRIVE_WEBHOOK_URL is set)
   registerDriveWatch().catch(() => {})
   return { id: folder.id, url: folder.webViewLink, name: displayName }
+}
+
+/** The folder id in a Drive folder link, or a bare id. */
+function driveFolderIdOf(link: string): string | null {
+  const text = link.trim()
+  if (/^[-\w]{20,}$/.test(text)) return text
+  return (
+    text.match(/\/folders\/([-\w]{20,})/)?.[1] ??
+    text.match(/[?&]id=([-\w]{20,})/)?.[1] ??
+    null
+  )
+}
+
+/**
+ * Checks a link to an existing Drive folder that a new project will use instead
+ * of getting a new folder, before the project is created. Refuses the folders
+ * that hold every project, and a folder another project already uses, since
+ * the mirror would list the same files twice.
+ */
+export async function findLinkableFolder(
+  link: string
+): Promise<LinkedDriveFolder> {
+  const folderId = driveFolderIdOf(link)
+  if (!folderId) {
+    throw new HttpError("Link chưa đúng. Hãy dán link của thư mục Google Drive.", 400)
+  }
+  const folder = await readerItem(folderId)
+  if (!folder) {
+    throw new HttpError(
+      `Web chưa đọc được thư mục này. Hãy chia sẻ thư mục cho ${readerEmail()} rồi thử lại.`,
+      400
+    )
+  }
+  if (!folder.isFolder) {
+    throw new HttpError("Đây là tệp, không phải thư mục. Hãy dán link của thư mục.", 400)
+  }
+  if (folder.trashed) {
+    throw new HttpError("Thư mục này đang nằm trong thùng rác Drive.", 400)
+  }
+  if (await holdsProjectsParent(folderId)) {
+    throw new HttpError(
+      `"${folder.name}" là thư mục chứa các dự án. Hãy mở đúng thư mục của dự án này rồi dán link đó.`,
+      400
+    )
+  }
+  const taken = await adminDb()
+    .collection("projects")
+    .where("driveFolderId", "==", folderId)
+    .limit(1)
+    .get()
+  if (!taken.empty) {
+    const other = taken.docs[0]
+    throw new HttpError(
+      `Thư mục này đã gắn với dự án ${other.get("code")} ${other.get("name")}.`,
+      409
+    )
+  }
+  return { id: folderId, name: folder.name, url: folder.webViewLink }
 }
 
 /**
@@ -184,10 +248,14 @@ export async function checkProjectDrive(
     return done(null, null)
   }
 
-  // the folder: still there for the write account?
+  // the folder: still there? `drive.file` hides a folder made by hand from the
+  // write account, so one it can't see only counts as gone if the reader can't
+  // see it either. Otherwise repair would swap a linked folder for a new one.
   let folderId = (snap.get("driveFolderId") as string | null) ?? null
   let folderUrl = (snap.get("driveFolderUrl") as string | null) ?? null
-  const current = folderId ? await getProjectFolder(folderId) : null
+  const current = folderId
+    ? ((await getProjectFolder(folderId)) ?? (await readerItem(folderId)))
+    : null
   if (current && !current.trashed) {
     checks.push({ key: "folder", label: "Thư mục dự án trên Drive", ok: true, detail: current.name })
   } else if (repair) {

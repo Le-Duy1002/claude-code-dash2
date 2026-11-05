@@ -14,8 +14,14 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
-import { ensureProjectFolder } from "../services/project-folder-service"
+import { syncProjectDocuments } from "../services/project-documents-service"
+import {
+  checkDriveFolderLink,
+  ensureProjectFolder,
+} from "../services/project-folder-service"
 import { createProject } from "../services/projects-service"
 import type { Project } from "../types"
 import { ProjectForm } from "./project-form"
@@ -33,7 +39,6 @@ export function CreateProjectDialog({
   parent?: Project | null
   onCreated?: (projectId: string) => void
 }) {
-  const { user } = useAuth()
   const [open, setOpen] = React.useState(false)
   const title = parent ? "Tạo dự án con" : "Tạo dự án"
 
@@ -52,20 +57,75 @@ export function CreateProjectDialog({
               : "Mã dự án được sinh tự động. Thư mục tài liệu Drive sẽ được tạo sau."}
           </DialogDescription>
         </DialogHeader>
-        <ProjectForm
-          submitLabel="Tạo"
-          onSubmit={async (values) => {
-            if (!user) throw new Error("Chưa đăng nhập")
-            const id = await createProject(values, user.uid, existing, parent)
-            toast.success(parent ? "Đã tạo dự án con." : "Đã tạo dự án.")
+        <NewProjectForm
+          existing={existing}
+          parent={parent}
+          onDone={(id) => {
             setOpen(false)
             onCreated?.(id)
-            // tạo thư mục Drive ở nền — nút "Tạo thư mục" trên trang dự án
-            // là phương án dự phòng nếu bước này lỗi
-            ensureProjectFolder(id).catch(() => {})
           }}
         />
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * A big project can use an existing Drive folder by pasting its link; the link
+ * is checked first, so a bad one creates nothing. A sub-project's folder always
+ * goes inside its parent's, so it gets no such field.
+ */
+function NewProjectForm({
+  existing,
+  parent,
+  onDone,
+}: {
+  existing: Project[]
+  parent: Project | null
+  onDone: (projectId: string) => void
+}) {
+  const { user } = useAuth()
+  const [folderLink, setFolderLink] = React.useState("")
+
+  return (
+    <ProjectForm
+      submitLabel="Tạo"
+      onSubmit={async (values) => {
+        if (!user) throw new Error("Chưa đăng nhập")
+        const link = folderLink.trim()
+        const folder = link ? await checkDriveFolderLink(link) : null
+        const id = await createProject(values, user.uid, existing, parent, folder)
+        toast.success(
+          folder
+            ? `Đã tạo dự án và gắn thư mục “${folder.name}”.`
+            : parent
+              ? "Đã tạo dự án con."
+              : "Đã tạo dự án."
+        )
+        onDone(id)
+        // chạy ở nền — nút "Đồng bộ Drive" và "Tạo thư mục" trên trang dự án
+        // là phương án dự phòng nếu bước này lỗi
+        const setUp = folder ? syncProjectDocuments(id) : ensureProjectFolder(id)
+        setUp.catch(() => {})
+      }}
+    >
+      {parent ? null : (
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="project-drive-link">
+            Thư mục Drive có sẵn (không bắt buộc)
+          </Label>
+          <Input
+            id="project-drive-link"
+            value={folderLink}
+            onChange={(e) => setFolderLink(e.target.value)}
+            placeholder="Dán link thư mục Google Drive"
+          />
+          <p className="text-xs text-muted-foreground">
+            Dán link thì dự án dùng luôn thư mục đó và hiện các tệp bên trong.
+            Để trống thì web tạo thư mục mới.
+          </p>
+        </div>
+      )}
+    </ProjectForm>
   )
 }

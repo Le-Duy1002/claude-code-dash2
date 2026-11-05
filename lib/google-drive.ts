@@ -246,6 +246,45 @@ export async function readerCanSee(fileId: string): Promise<boolean> {
   }
 }
 
+/** A Drive item as the mirror's service account sees it, or null if it can't. */
+export async function readerItem(fileId: string): Promise<{
+  id: string
+  name: string
+  isFolder: boolean
+  trashed: boolean
+  webViewLink: string
+  parents: string[]
+} | null> {
+  try {
+    const res = await readClient().files.get({
+      fileId,
+      fields: "id, name, mimeType, trashed, webViewLink, parents",
+      supportsAllDrives: true,
+    })
+    return {
+      id: res.data.id ?? fileId,
+      name: res.data.name ?? "",
+      isFolder: res.data.mimeType === FOLDER_MIME,
+      trashed: Boolean(res.data.trashed),
+      webViewLink: res.data.webViewLink ?? "",
+      parents: res.data.parents ?? [],
+    }
+  } catch (error) {
+    if ((error as { code?: number }).code === 404) return null
+    throw error
+  }
+}
+
+/** Whether `folderId` is the "Dự án" parent folder or a folder above it. */
+export async function holdsProjectsParent(folderId: string): Promise<boolean> {
+  let id: string | undefined = PROJECTS_PARENT_FOLDER_ID
+  for (let depth = 0; id && depth < 10; depth += 1) {
+    if (id === folderId) return true
+    id = (await readerItem(id))?.parents[0]
+  }
+  return false
+}
+
 /** Shares a project folder with the mirror's service account (Viewer). */
 export async function shareWithReader(fileId: string): Promise<void> {
   const drive = projectsWriteClient()

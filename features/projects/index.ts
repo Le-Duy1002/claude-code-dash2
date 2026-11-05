@@ -15,6 +15,7 @@ export {
   updateProject,
 } from "./services/projects-service"
 export {
+  checkDriveFolderLink,
   checkProjectDrive,
   ensureProjectFolder,
 } from "./services/project-folder-service"

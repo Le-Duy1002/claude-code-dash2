@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
-import { PROJECT_STAFF, type ProjectInput } from "../types"
+import { PROJECT_STAFF, ProjectFormError, type ProjectInput } from "../types"
 
 const EMPTY: ProjectInput = {
   name: "",
@@ -23,10 +23,13 @@ export function ProjectForm({
   defaultValues,
   submitLabel,
   onSubmit,
+  children,
 }: {
   defaultValues?: ProjectInput
   submitLabel: string
   onSubmit: (values: ProjectInput) => Promise<void>
+  /** extra fields, shown after the shared ones */
+  children?: React.ReactNode
 }) {
   const [values, setValues] = React.useState<ProjectInput>(
     defaultValues ?? EMPTY
@@ -62,8 +65,12 @@ export function ProjectForm({
     setPending(true)
     try {
       await onSubmit({ ...values, name, description: values.description.trim() })
-    } catch {
-      setError("Đã có lỗi xảy ra. Vui lòng thử lại.")
+    } catch (e) {
+      setError(
+        e instanceof ProjectFormError
+          ? e.message
+          : "Đã có lỗi xảy ra. Vui lòng thử lại."
+      )
       setPending(false)
     }
   }
@@ -142,6 +149,8 @@ export function ProjectForm({
           })}
         </div>
       </div>
+
+      {children}
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 

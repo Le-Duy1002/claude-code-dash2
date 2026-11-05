@@ -1,6 +1,10 @@
 import { auth } from "@/lib/firebase"
 
-import type { ProjectDriveCheck } from "../types"
+import {
+  ProjectFormError,
+  type LinkedDriveFolder,
+  type ProjectDriveCheck,
+} from "../types"
 
 export type ProjectFolderResult = {
   driveFolderId: string
@@ -28,6 +32,31 @@ export async function ensureProjectFolder(
     throw new Error(body.error || `Lỗi ${response.status}`)
   }
   return body as ProjectFolderResult
+}
+
+/**
+ * Checks a pasted link to an existing Drive folder for a new project. Throws
+ * `ProjectFormError` with the reason when the folder can't be used.
+ */
+export async function checkDriveFolderLink(
+  link: string
+): Promise<LinkedDriveFolder> {
+  const token = await auth.currentUser?.getIdToken()
+  if (!token) throw new Error("Chưa đăng nhập")
+
+  const response = await fetch("/api/projects/drive-folder", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ link }),
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new ProjectFormError(body.error || `Lỗi ${response.status}`)
+  }
+  return body as LinkedDriveFolder
 }
 
 /**

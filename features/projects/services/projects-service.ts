@@ -14,6 +14,7 @@ import { db } from "@/lib/firebase"
 import {
   nextProjectCode,
   nextSubProjectCode,
+  type LinkedDriveFolder,
   type Project,
   type ProjectInput,
   type ProjectStatus,
@@ -79,13 +80,14 @@ export function subscribeToProject(
 /**
  * Tạo dự án — hoặc dự án con khi có `parent`. `existing` dùng để sinh mã kế
  * tiếp. Thư mục tài liệu Drive để `driveFolderPending = true` — đợt tài liệu
- * sẽ khởi tạo và gỡ cờ này.
+ * sẽ khởi tạo và gỡ cờ này. Có `folder` thì dự án dùng luôn thư mục đó.
  */
 export async function createProject(
   input: ProjectInput,
   createdByUid: string,
   existing: Project[],
-  parent: Project | null = null
+  parent: Project | null = null,
+  folder: LinkedDriveFolder | null = null
 ): Promise<string> {
   const ref = await addDoc(projectsCollection, {
     name: input.name.trim(),
@@ -98,8 +100,9 @@ export async function createProject(
       : nextProjectCode(existing),
     parentId: parent?.id ?? null,
     status: "active" satisfies ProjectStatus,
-    driveFolderId: null,
-    driveFolderPending: true,
+    driveFolderId: folder?.id ?? null,
+    driveFolderUrl: folder?.url ?? null,
+    driveFolderPending: !folder,
     createdByUid,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
