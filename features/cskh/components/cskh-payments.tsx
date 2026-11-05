@@ -126,21 +126,24 @@ export function PaymentsPanel({
   customer,
   onSave,
   showTitle = true,
+  defaultDate,
 }: {
   customer: CskhCustomer
   onSave: (patch: CskhCustomerPatch) => Promise<void>
   /** off when the surrounding dialog already titles it */
   showTitle?: boolean
+  /** the day "Ngày nhận" starts on, today if unset */
+  defaultDate?: string
 }) {
-  const today = vnDateOf(Date.now())
+  const startDate = defaultDate ?? vnDateOf(Date.now())
   const [amount, setAmount] = React.useState("")
-  const [date, setDate] = React.useState(today)
+  const [date, setDate] = React.useState(startDate)
   const [kind, setKind] = React.useState<CskhPaymentKind>(() =>
-    suggestPaymentKind(customer, today)
+    suggestPaymentKind(customer, startDate)
   )
   const [kindTouched, setKindTouched] = React.useState(false)
   const [debtMonth, setDebtMonth] = React.useState(
-    () => defaultDebtMonth(customer) ?? today.slice(0, 7)
+    () => defaultDebtMonth(customer) ?? startDate.slice(0, 7)
   )
   const [busy, setBusy] = React.useState(false)
   const total = paidTotal(customer)
@@ -334,19 +337,21 @@ export function NewDebtForm({
   customerName: initialName,
   conversationId,
   staffKey: initialStaff,
+  defaultDate,
   onCreated,
 }: {
   customerName: string
   conversationId: string | null
   staffKey: string | null
+  /** the day "Ngày nhận" starts on, today if unset */
+  defaultDate?: string
   onCreated: (customer: CskhCustomer) => void
 }) {
-  const today = vnDateOf(Date.now())
   const [name, setName] = React.useState(initialName)
   const [staffKey, setStaffKey] = React.useState<string | null>(initialStaff)
   const [debtMonth, setDebtMonth] = React.useState("")
   const [amount, setAmount] = React.useState("")
-  const [date, setDate] = React.useState(today)
+  const [date, setDate] = React.useState(defaultDate ?? vnDateOf(Date.now()))
   const [price, setPrice] = React.useState("")
   const [busy, setBusy] = React.useState(false)
 

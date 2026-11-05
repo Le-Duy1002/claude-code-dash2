@@ -5,9 +5,12 @@ import type {
   CskhCustomer,
   CskhCustomerPatch,
   CskhDebtorInput,
+  CskhManualCloseInput,
   CskhReport,
   CskhSearchHit,
   CskhSyncResult,
+  CskhViewExtra,
+  CskhViewExtraInput,
 } from "../types"
 
 /**
@@ -86,6 +89,57 @@ export async function updateCskhCustomer(
   })
   const body = await readJson<{ customer: CskhCustomer }>(response)
   return body.customer
+}
+
+/** The "+" of Khách chốt — a close made outside Pancake. */
+export async function createCskhManualClose(
+  input: CskhManualCloseInput
+): Promise<CskhCustomer> {
+  const response = await fetch("/api/cskh/customers/manual", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${await idToken()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  })
+  const body = await readJson<{ customer: CskhCustomer }>(response)
+  return body.customer
+}
+
+export async function deleteCskhManualClose(id: string): Promise<void> {
+  const response = await fetch(`/api/cskh/customers/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${await idToken()}` },
+  })
+  await readJson<{ ok: true }>(response)
+}
+
+/** The "+" of Khách xem — views on other sites, on top of Pancake's count. */
+export async function addCskhViewExtra(
+  input: CskhViewExtraInput
+): Promise<CskhViewExtra> {
+  const response = await fetch("/api/cskh/view-extras", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${await idToken()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  })
+  const body = await readJson<{ extra: CskhViewExtra }>(response)
+  return body.extra
+}
+
+export async function deleteCskhViewExtra(id: string): Promise<void> {
+  const response = await fetch(
+    `/api/cskh/view-extras/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${await idToken()}` },
+    }
+  )
+  await readJson<{ ok: true }>(response)
 }
 
 /** "Tìm khách" — by name, or a pasted Pancake conversation link / id. */

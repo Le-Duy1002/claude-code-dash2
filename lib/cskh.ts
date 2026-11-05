@@ -33,9 +33,12 @@ import {
   type CskhCustomer,
   type CskhCustomerPatch,
   type CskhDebtorInput,
+  type CskhManualCloseInput,
   type CskhPayment,
   type CskhSearchHit,
   type CskhSyncResult,
+  type CskhViewExtra,
+  type CskhViewExtraInput,
 } from "@/features/cskh/types"
 
 /**
@@ -43,6 +46,7 @@ import {
  * Đường's figures up to `CSKH_OLD_PAGE_LAST_DAY`. All Firestore access goes
  * through the Admin SDK, so these collections need no client security rules:
  *   cskhCustomers/{conversationId} — one closed customer (see `CskhCustomer`)
+ *   cskhViewExtras/{autoId}        — khách xem added by hand (`CskhViewExtra`)
  *   cskhBaseline/{autoId}          — `{ ids }`: conversations that already had
  *                                    "Chốt sale" before tracking started
  *   cskhMeta/state                 — record `ids`, baseline progress, tracking
@@ -50,6 +54,7 @@ import {
  */
 
 const CUSTOMERS = "cskhCustomers"
+const VIEW_EXTRAS = "cskhViewExtras"
 const BASELINE = "cskhBaseline"
 const STATE = "cskhMeta/state"
 const HOUR = 3_600_000
@@ -311,7 +316,7 @@ export async function syncCskhCustomers({
       now,
       dated.docs
         .map((doc) => doc.data())
-        .filter((data) => !data.legacy)
+        .filter((data) => !data.legacy && !data.manual)
         .map((data) => String(data.closedDate))
     )
   } catch {
@@ -398,10 +403,18 @@ export async function syncCskhCustomers({
       if (prev.customerName !== conv.customerName) {
         patch.customerName = conv.customerName
       }
-      // an old customer added by hand was never a tracked close
-      if (!prev.legacy && Boolean(prev.tagRemoved) !== !closed) {
+      // an old customer added by hand was never a tracked close, and a close
+      // entered by hand has no "Chốt sale" to lose
+      if (
+        !prev.legacy &&
+        !prev.manual &&
+        Boolean(prev.tagRemoved) !== !closed
+      ) {
         patch.tagRemoved = !closed
       }
+      // the tag went on after all: Pancake counts it now, so it must not be
+      // added on top (a tag from before tracking isn't in Pancake's figures)
+      if (prev.manual && closed && !baseline.has(conv.id)) patch.manual = false
       if (!prev.staffManual) {
         const staffKey = staffKeyFromTags(tags)
         if ((prev.staffKey ?? null) !== staffKey) patch.staffKey = staffKey
@@ -460,11 +473,13 @@ async function tagStatsOfPages(from: string, to: string, warnings: string[]) {
 
 /**
  * Khách xem per day per staff (Pancake's own name-tag counts over `dates`,
- * from `tagStatsOfPages`), every record relevant to the range, when khách
- * chốt tracking started, and the last sync time.
+ * from `tagStatsOfPages`) and what was added to it by hand, every record
+ * relevant to the range, when khách chốt tracking started, and the last sync
+ * time.
  */
 export async function readCskhReport(dates: string[]): Promise<{
   views: Record<string, Record<string, number>>
+  viewExtras: CskhViewExtra[]
   customers: CskhCustomer[]
   closedTrackedFrom: string | null
   pancakeClosed: Record<string, number>
@@ -478,6 +493,7 @@ export async function readCskhReport(dates: string[]): Promise<{
   if (dates.length === 0) {
     return {
       views,
+      viewExtras: [],
       customers: [],
       closedTrackedFrom: null,
       pancakeClosed,
@@ -488,11 +504,17 @@ export async function readCskhReport(dates: string[]): Promise<{
   const from = dates[0]
   const to = dates[dates.length - 1]
 
-  const [statsByPage, customersSnap, stateSnap] = await Promise.all([
-    tagStatsOfPages(from, to, warnings),
-    adminDb().collection(CUSTOMERS).get(),
-    adminDb().doc(STATE).get(),
-  ])
+  const [statsByPage, customersSnap, stateSnap, extrasSnap] =
+    await Promise.all([
+      tagStatsOfPages(from, to, warnings),
+      adminDb().collection(CUSTOMERS).get(),
+      adminDb().doc(STATE).get(),
+      adminDb()
+        .collection(VIEW_EXTRAS)
+        .where("date", ">=", from)
+        .where("date", "<=", to)
+        .get(),
+    ])
 
   for (const stats of statsByPage) {
     // the range is before this page started, or after it stopped
@@ -547,7 +569,7 @@ export async function readCskhReport(dates: string[]): Promise<{
     // the tracking start day's Pancake count includes the hours before it
     const assigned: Record<string, number> = {}
     for (const c of customers) {
-      if (c.legacy || c.tagRemoved || !c.staffKey) continue
+      if (c.legacy || c.manual || c.tagRemoved || !c.staffKey) continue
       assigned[c.closedDate] = (assigned[c.closedDate] ?? 0) + 1
     }
     const gaps = dates
@@ -570,6 +592,7 @@ export async function readCskhReport(dates: string[]): Promise<{
 
   return {
     views,
+    viewExtras: extrasSnap.docs.map((doc) => toViewExtra(doc.id, doc.data())),
     customers,
     closedTrackedFrom,
     pancakeClosed,
@@ -687,6 +710,33 @@ function newPaymentId(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 }
 
+function cleanPrice(value: unknown): number | null {
+  if (value == null || value === "") return null
+  const price = Number(value)
+  if (!Number.isFinite(price) || price < 0) {
+    throw new CskhError("Giá bản luận không hợp lệ")
+  }
+  return price
+}
+
+function cleanConversation(value: string | null | undefined): string | null {
+  if (!value) return null
+  const conversationId = parseConversationRef(value)
+  if (!conversationId) {
+    throw new CskhError("Link / mã hội thoại Pancake không hợp lệ")
+  }
+  return conversationId
+}
+
+/** A day entered by hand: a real date, not one that hasn't come yet. */
+function cleanPastDate(value: unknown, label: string): string {
+  if (typeof value !== "string" || !ISO_DATE.test(value)) {
+    throw new CskhError(`${label} không hợp lệ`)
+  }
+  if (value > vnDateOf(Date.now())) throw new CskhError(`${label} chưa tới`)
+  return value
+}
+
 /**
  * "Thêm khách trả nợ": records an old customer (closed before tracking)
  * paying off a debt, with that first payment. Keyed by the Pancake
@@ -706,19 +756,8 @@ export async function createCskhDebtor(
   if (!ISO_MONTH.test(String(input.debtMonth ?? ""))) {
     throw new CskhError("Chọn nợ của tháng nào")
   }
-  const price =
-    input.price == null || (input.price as unknown) === ""
-      ? null
-      : Number(input.price)
-  if (price != null && (!Number.isFinite(price) || price < 0)) {
-    throw new CskhError("Giá bản luận không hợp lệ")
-  }
-  const conversationId = input.conversation
-    ? parseConversationRef(input.conversation)
-    : null
-  if (input.conversation && !conversationId) {
-    throw new CskhError("Link / mã hội thoại Pancake không hợp lệ")
-  }
+  const price = cleanPrice(input.price)
+  const conversationId = cleanConversation(input.conversation)
   const [payment] = cleanPayments([
     {
       id: newPaymentId(),
@@ -765,6 +804,121 @@ export async function createCskhDebtor(
   }
   const fresh = await ref.get()
   return mapCskhCustomer(fresh.id, fresh.data()!)
+}
+
+/**
+ * The "+" of Khách chốt: a close made outside Pancake, with what was paid at
+ * the close if anything. A conversation that already has a record is refused,
+ * so one customer can't count twice.
+ */
+export async function createCskhManualClose(
+  input: CskhManualCloseInput,
+  actorName: string
+): Promise<CskhCustomer> {
+  const customerName = String(input.customerName ?? "").trim()
+  if (!customerName) throw new CskhError("Nhập tên khách")
+  if (!STAFF_KEYS.has(input.staffKey)) throw new CskhError("Chọn nhân viên")
+  const closedDate = cleanPastDate(input.closedDate, "Ngày chốt")
+  const price = cleanPrice(input.price)
+  const conversationId = cleanConversation(input.conversation)
+  const payments = input.amount
+    ? cleanPayments([
+        {
+          id: newPaymentId(),
+          amount: input.amount,
+          date: closedDate,
+          kind: "chot",
+          debtMonth: null,
+        },
+      ])
+    : []
+
+  const db = adminDb()
+  const col = db.collection(CUSTOMERS)
+  const ref = conversationId ? col.doc(conversationId) : col.doc()
+  if ((await ref.get()).exists) {
+    throw new CskhError(
+      "Khách này đã có trong app — tìm tên ở ô tìm kiếm để nhập tiền",
+      409
+    )
+  }
+  await ref.set({
+    pageId: conversationId ? pageIdOfConversation(conversationId) : CSKH_PAGE_ID,
+    customerName,
+    staffKey: input.staffKey,
+    staffManual: true,
+    closedDate,
+    legacy: false,
+    manual: true,
+    debtMonth: null,
+    price: price == null ? null : Math.round(price),
+    payments,
+    tags: [],
+    tagRemoved: false,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedByName: actorName,
+  })
+  await db
+    .doc(STATE)
+    .set({ ids: FieldValue.arrayUnion(ref.id) }, { merge: true })
+  const fresh = await ref.get()
+  return mapCskhCustomer(fresh.id, fresh.data()!)
+}
+
+/** Takes back a close entered by hand, with its payments. */
+export async function deleteCskhManualClose(id: string): Promise<void> {
+  const db = adminDb()
+  const ref = db.collection(CUSTOMERS).doc(id)
+  const snap = await ref.get()
+  if (!snap.exists) throw new CskhError("Không tìm thấy khách này", 404)
+  if (!snap.data()!.manual) throw new CskhError("Chỉ xoá được khách nhập tay")
+  await ref.delete()
+  await db
+    .doc(STATE)
+    .set({ ids: FieldValue.arrayRemove(id) }, { merge: true })
+}
+
+function toViewExtra(
+  id: string,
+  data: FirebaseFirestore.DocumentData
+): CskhViewExtra {
+  return {
+    id,
+    date: String(data.date),
+    staffKey: String(data.staffKey),
+    count: Number(data.count),
+    createdByName: (data.createdByName as string) ?? null,
+  }
+}
+
+/** The "+" of Khách xem: views Pancake can't see, on top of its count. */
+export async function addCskhViewExtra(
+  input: CskhViewExtraInput,
+  actorName: string
+): Promise<CskhViewExtra> {
+  const date = cleanPastDate(input.date, "Ngày")
+  if (!STAFF_KEYS.has(input.staffKey)) {
+    throw new CskhError("Nhân viên không hợp lệ")
+  }
+  const count = Number(input.count)
+  if (!Number.isInteger(count) || count <= 0) {
+    throw new CskhError("Số khách phải lớn hơn 0")
+  }
+  const data = {
+    date,
+    staffKey: input.staffKey,
+    count,
+    createdByName: actorName,
+  }
+  const ref = await adminDb()
+    .collection(VIEW_EXTRAS)
+    .add({ ...data, createdAt: FieldValue.serverTimestamp() })
+  return toViewExtra(ref.id, data)
+}
+
+export async function deleteCskhViewExtra(id: string): Promise<void> {
+  await adminDb().collection(VIEW_EXTRAS).doc(id).delete()
 }
 
 /** Saves the hand-edited fields of one record. */

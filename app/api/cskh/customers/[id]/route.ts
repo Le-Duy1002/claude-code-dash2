@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server"
 
-import { CskhError, updateCskhCustomer } from "@/lib/cskh"
+import {
+  CskhError,
+  deleteCskhManualClose,
+  updateCskhCustomer,
+} from "@/lib/cskh"
 import { getRequestUser } from "@/lib/firebase-admin"
 import type { CskhCustomerPatch } from "@/features/cskh/types"
 
@@ -34,6 +38,30 @@ export async function PATCH(
     }
     return NextResponse.json(
       { error: (error as Error).message || "Lỗi lưu" },
+      { status: 500 }
+    )
+  }
+}
+
+/** Takes back a close entered by hand. Pancake's closes can't be deleted. */
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  if (!(await getRequestUser(request))) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 })
+  }
+
+  const { id } = await params
+  try {
+    await deleteCskhManualClose(decodeURIComponent(id))
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    if (error instanceof CskhError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    return NextResponse.json(
+      { error: (error as Error).message || "Lỗi xoá" },
       { status: 500 }
     )
   }

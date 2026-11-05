@@ -24,7 +24,14 @@ import {
   type CskhMetrics,
   type CskhPeriod,
   type CskhReport,
+  type CskhViewExtra,
 } from "../types"
+import {
+  AddClosedButton,
+  AddClosedDialog,
+  AddViewsPopover,
+  type AddClosedTarget,
+} from "./cskh-add-cell"
 import { CskhCustomerTable } from "./cskh-customer-list"
 import {
   PeriodExpandButtons,
@@ -117,18 +124,54 @@ function dividerClass(group: string, index: number): string {
 
 type OpenCell = { group: string; period: CskhPeriod }
 
+/** What the "+" of a staff's Khách xem / Khách chốt cell needs. */
+type CellAdders = {
+  closedTrackedFrom: string | null
+  viewExtras: CskhViewExtra[]
+  onViewExtraAdded: (extra: CskhViewExtra) => void
+  onViewExtraRemoved: (id: string) => void
+  onAddClosed: (target: AddClosedTarget) => void
+}
+
 function MetricCells({
   period,
   sums,
   onOpen,
   strong,
+  adders,
 }: {
   period: CskhPeriod
   sums: Record<string, CskhMetrics>
   onOpen: (cell: OpenCell) => void
   /** a month / grand-total row — a little more tint */
   strong?: boolean
+  /** shows the "+"; the Tổng cả kỳ row goes without */
+  adders?: CellAdders
 }) {
+  const addCell = (group: string, column: number, m: CskhMetrics) => {
+    if (!adders || group === CSKH_TOTAL || !m.tracked) return null
+    if (column === 1) {
+      return (
+        <AddClosedButton
+          onClick={() => adders.onAddClosed({ staffKey: group, period })}
+        />
+      )
+    }
+    if (column !== 0) return null
+    const firstDay = period.dates[0]
+    const trackedFrom = adders.closedTrackedFrom ?? firstDay
+    return (
+      <AddViewsPopover
+        staffKey={group}
+        period={period}
+        minDate={firstDay > trackedFrom ? firstDay : trackedFrom}
+        viewExtras={adders.viewExtras}
+        onAdded={adders.onViewExtraAdded}
+        onRemoved={adders.onViewExtraRemoved}
+      />
+    )
+  }
+
   return (
     <>
       {CSKH_GROUPS.map((g) => {
@@ -153,6 +196,7 @@ function MetricCells({
               strong ? toneOf(g.key).sub : toneOf(g.key).cell
             )}
           >
+            {addCell(g.key, i, m)}
             {clickable && OPENS_CUSTOMERS.has(i) ? (
               <button
                 type="button"
@@ -178,11 +222,13 @@ function PeriodCustomersDialog({
   cell,
   onClose,
   onCustomerChange,
+  onCustomerRemoved,
 }: {
   report: CskhReport
   cell: OpenCell | null
   onClose: () => void
   onCustomerChange: (next: CskhCustomer) => void
+  onCustomerRemoved: (id: string) => void
 }) {
   const customers = React.useMemo(() => {
     if (!cell) return []
@@ -212,6 +258,7 @@ function PeriodCustomersDialog({
           <CskhCustomerTable
             customers={customers}
             onChange={onCustomerChange}
+            onRemoved={onCustomerRemoved}
           />
         ) : (
           <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
@@ -227,19 +274,34 @@ function PeriodCustomersDialog({
  * Thống kê chi tiết: one row per month, week and day over the selected range
  * (months sum their weeks, weeks their days), with the six metrics for the
  * total and for each staff side by side. Khách chốt / giá / đã trả cells open
- * that staff's customers for the row's period to enter prices and payments.
+ * that staff's customers for the row's period to enter prices and payments;
+ * the "+" of a staff's Khách xem / Khách chốt adds what Pancake can't see.
  */
 export function CskhDetailTable({
   report,
   onCustomerChange,
+  onCustomerRemoved,
+  onViewExtraAdded,
+  onViewExtraRemoved,
 }: {
   report: CskhReport
   onCustomerChange: (next: CskhCustomer) => void
+  onCustomerRemoved: (id: string) => void
+  onViewExtraAdded: (extra: CskhViewExtra) => void
+  onViewExtraRemoved: (id: string) => void
 }) {
   const daily = React.useMemo(() => dailyMetrics(report), [report])
   const { tree, rows, expanded, toggle, expandAll, collapseAll } =
     usePeriodTree(report.dates)
   const [openCell, setOpenCell] = React.useState<OpenCell | null>(null)
+  const [addClosed, setAddClosed] = React.useState<AddClosedTarget | null>(null)
+  const adders: CellAdders = {
+    closedTrackedFrom: report.closedTrackedFrom,
+    viewExtras: report.viewExtras,
+    onViewExtraAdded,
+    onViewExtraRemoved,
+    onAddClosed: setAddClosed,
+  }
 
   const grand: CskhPeriod = {
     id: "all",
@@ -311,6 +373,7 @@ export function CskhDetailTable({
                   sums={sumMetrics(daily, node.dates)}
                   onOpen={setOpenCell}
                   strong={node.level === "month"}
+                  adders={adders}
                 />
               </tr>
             ))}
@@ -337,6 +400,13 @@ export function CskhDetailTable({
         report={report}
         cell={openCell}
         onClose={() => setOpenCell(null)}
+        onCustomerChange={onCustomerChange}
+        onCustomerRemoved={onCustomerRemoved}
+      />
+      <AddClosedDialog
+        target={addClosed}
+        closedTrackedFrom={report.closedTrackedFrom}
+        onClose={() => setAddClosed(null)}
         onCustomerChange={onCustomerChange}
       />
     </div>

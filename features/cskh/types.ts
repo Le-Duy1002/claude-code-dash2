@@ -8,7 +8,8 @@
  *    Pancake's "Thẻ hội thoại" screen shows, so one day can be negative.
  *    A staff column counts it only from `closedTrackedFrom` on, the same
  *    days as that staff's khách chốt (user, 28/10/2026) — Tổng counts every
- *    day.
+ *    day. Views on other sites, which Pancake can't see, are added by hand on
+ *    top (`CskhViewExtra`, user, 05/11/2026).
  *  - Khách chốt comes from Pancake's Thẻ hội thoại (user, 20/10/2026): Tổng
  *    is Pancake's own daily "Chốt sale" count, every day. Per staff it is a
  *    conversation carrying both "Chốt sale" and that staff's name tag.
@@ -18,7 +19,9 @@
  *    page); from then on it reads Pancake's hourly "Chốt sale" events, finds
  *    the newly tagged conversations and dates each by the event it matches.
  *    Before `closedTrackedFrom` only Tổng has a khách chốt figure (Pancake
- *    can't attribute it, so the staff split / giá / AOV show "—").
+ *    can't attribute it, so the staff split / giá / AOV show "—"). A close
+ *    made outside Pancake is entered by hand and counts on top of Pancake's
+ *    figure (`CskhCustomer.manual`, user, 05/11/2026).
  *  - Giá bản luận and the payments are entered by hand per closed customer;
  *    each payment carries its own date and "Đã trả" sums payments by it.
  *  - AOV = tổng giá bản luận / số khách chốt; tỉ lệ chốt = khách chốt / khách xem.
@@ -109,7 +112,7 @@ export type CskhPayment = {
  * get "Chốt sale" (id = Pancake conversation id). A `legacy` one was added by
  * hand to record debt payments from a customer closed before tracking started
  * (id = the conversation id when a link was given, else generated); it never
- * counts as khách chốt.
+ * counts as khách chốt. A `manual` one is a close entered by hand (same ids).
  */
 export type CskhCustomer = {
   id: string
@@ -122,6 +125,11 @@ export type CskhCustomer = {
   closedDate: string
   /** added by hand for an old customer's debt (see type doc) */
   legacy: boolean
+  /**
+   * a close entered by hand: no "Chốt sale" on Pancake, so it counts on top of
+   * Pancake's figure. The sync clears this if the tag turns up after all.
+   */
+  manual: boolean
   /** `YYYY-MM` an old customer's debt is from — `legacy` only */
   debtMonth: string | null
   /** giá bản luận, null until entered */
@@ -143,6 +151,24 @@ export type CskhCustomerPatch = Partial<{
   payments: CskhPayment[]
 }>
 
+/**
+ * Khách xem added by hand for one staff on one day — `cskhViewExtras/{id}`.
+ * One entry per "+", so a wrong one can be taken back on its own.
+ */
+export type CskhViewExtra = {
+  id: string
+  /** `YYYY-MM-DD` */
+  date: string
+  staffKey: string
+  count: number
+  createdByName: string | null
+}
+
+export type CskhViewExtraInput = Pick<
+  CskhViewExtra,
+  "date" | "staffKey" | "count"
+>
+
 export type CskhReport = {
   fromMs: number
   toMs: number
@@ -150,6 +176,8 @@ export type CskhReport = {
   dates: string[]
   /** date -> staff key -> khách xem (Pancake's net name-tag count) */
   views: Record<string, Record<string, number>>
+  /** khách xem added by hand over the range, on top of `views` */
+  viewExtras: CskhViewExtra[]
   /** closed in range, paid in range, or still owing */
   customers: CskhCustomer[]
   /** first day khách chốt is tracked (`YYYY-MM-DD`), null until the baseline is done */
@@ -184,6 +212,18 @@ export type CskhDebtorInput = {
   /** the first debt payment */
   amount: number
   date: string
+}
+
+/** Input for the "+" of Khách chốt — a close made outside Pancake. */
+export type CskhManualCloseInput = {
+  customerName: string
+  /** Pancake conversation link or id, optional */
+  conversation?: string | null
+  staffKey: string
+  closedDate: string
+  price?: number | null
+  /** paid at the close, received on `closedDate` */
+  amount?: number | null
 }
 
 /**
@@ -300,6 +340,7 @@ export function mapCskhCustomer(
     customerName: String(data.customerName ?? "Khách"),
     staffKey: (data.staffKey as string) ?? null,
     staffManual: Boolean(data.staffManual),
+    manual: Boolean(data.manual),
     ...base,
     price:
       data.price == null || !Number.isFinite(Number(data.price))
@@ -409,6 +450,11 @@ export type CskhDaily = Map<string, Record<string, CskhMetrics>>
 export function dailyMetrics(report: CskhReport): CskhDaily {
   const out: CskhDaily = new Map()
   const from = report.closedTrackedFrom
+  const extras = new Map<string, number>()
+  for (const e of report.viewExtras) {
+    const key = `${e.date}|${e.staffKey}`
+    extras.set(key, (extras.get(key) ?? 0) + e.count)
+  }
   for (const date of report.dates) {
     const tracked = from != null && date >= from
     const row: Record<string, CskhMetrics> = {}
@@ -416,7 +462,9 @@ export function dailyMetrics(report: CskhReport): CskhDaily {
       row[g.key] = { ...emptyMetrics(), tracked, closedKnown: tracked }
     }
     for (const s of CSKH_STAFF) {
-      const v = report.views[date]?.[s.key] ?? 0
+      const v =
+        (report.views[date]?.[s.key] ?? 0) +
+        (extras.get(`${date}|${s.key}`) ?? 0)
       row[CSKH_TOTAL].viewed += v
       // a staff's khách chốt starts with tracking, so their khách xem does
       // too — otherwise a row spanning the start shows a khách xem that
@@ -442,7 +490,10 @@ export function dailyMetrics(report: CskhReport): CskhDaily {
     if (closedRow && !c.tagRemoved && closedRow[CSKH_TOTAL].tracked) {
       const pancakeCounted = report.pancakeClosed[c.closedDate] != null
       for (const g of groupsOf(c)) {
-        if (g !== CSKH_TOTAL || !pancakeCounted) closedRow[g].closed += 1
+        // a close entered by hand isn't in Pancake's count, so it goes on top
+        if (g !== CSKH_TOTAL || !pancakeCounted || c.manual) {
+          closedRow[g].closed += 1
+        }
         closedRow[g].closedTracked += 1
         closedRow[g].price += c.price ?? 0
       }

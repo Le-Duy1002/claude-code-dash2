@@ -1,9 +1,20 @@
 "use client"
 
 import * as React from "react"
-import { ExternalLinkIcon } from "lucide-react"
+import { ExternalLinkIcon, Trash2Icon } from "lucide-react"
 import { toast } from "sonner"
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -11,7 +22,10 @@ import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { pancakeConvLink } from "@/features/pancake/types"
 
-import { updateCskhCustomer } from "../services/cskh-service"
+import {
+  deleteCskhManualClose,
+  updateCskhCustomer,
+} from "../services/cskh-service"
 import {
   ISO_DATE,
   formatMoney,
@@ -60,6 +74,58 @@ function PriceInput({
   )
 }
 
+/** Takes back a close entered by hand; Pancake's closes have no delete. */
+function DeleteManualButton({
+  customer,
+  onRemoved,
+}: {
+  customer: CskhCustomer
+  onRemoved: (id: string) => void
+}) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="Xoá khách nhập tay này"
+            className="shrink-0 text-muted-foreground hover:text-destructive"
+          />
+        }
+      >
+        <Trash2Icon />
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Xoá {customer.customerName}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Khách này và các lần nhận tiền của khách sẽ bị xoá, không hoàn tác
+            được.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Huỷ</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => {
+              deleteCskhManualClose(customer.id)
+                .then(() => {
+                  onRemoved(customer.id)
+                  toast.success("Đã xoá khách")
+                })
+                .catch((error) =>
+                  toast.error(`Không xoá được: ${(error as Error).message}`)
+                )
+            }}
+          >
+            Xoá
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
 /**
  * The editable customer rows — ngày chốt, staff, giá bản luận, payments.
  * Used by the full list below and by the per-staff cell dialog of the
@@ -68,10 +134,13 @@ function PriceInput({
 export function CskhCustomerTable({
   customers,
   onChange,
+  onRemoved,
 }: {
   customers: CskhCustomer[]
   /** a record was saved */
   onChange: (next: CskhCustomer) => void
+  /** a close entered by hand was deleted */
+  onRemoved: (id: string) => void
 }) {
   async function save(customer: CskhCustomer, patch: CskhCustomerPatch) {
     try {
@@ -153,6 +222,14 @@ export function CskhCustomerTable({
                         <ExternalLinkIcon className="size-3.5" />
                       </a>
                     ) : null}
+                    {c.manual ? (
+                      <>
+                        <Badge variant="outline" className="shrink-0">
+                          Nhập tay
+                        </Badge>
+                        <DeleteManualButton customer={c} onRemoved={onRemoved} />
+                      </>
+                    ) : null}
                   </div>
                   {c.tagRemoved ? (
                     <Badge variant="outline" className="mt-0.5">
@@ -215,10 +292,13 @@ export function CskhCustomerTable({
 export function CskhCustomerList({
   customers,
   onChange,
+  onRemoved,
 }: {
   customers: CskhCustomer[]
   /** a record was saved or added */
   onChange: (next: CskhCustomer) => void
+  /** a close entered by hand was deleted */
+  onRemoved: (id: string) => void
 }) {
   const [staff, setStaff] = React.useState<string>("all")
 
@@ -286,7 +366,11 @@ export function CskhCustomerList({
             tên ở ô tìm kiếm.
           </p>
         ) : (
-          <CskhCustomerTable customers={visible} onChange={onChange} />
+          <CskhCustomerTable
+            customers={visible}
+            onChange={onChange}
+            onRemoved={onRemoved}
+          />
         )}
       </CardContent>
     </Card>

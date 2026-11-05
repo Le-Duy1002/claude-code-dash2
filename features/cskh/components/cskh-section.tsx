@@ -19,6 +19,7 @@ import {
   formatDm,
   type CskhCustomer,
   type CskhReport,
+  type CskhViewExtra,
 } from "../types"
 import { CskhCustomerList } from "./cskh-customer-list"
 import { CskhDetailTable } from "./cskh-detail-table"
@@ -95,6 +96,32 @@ export function CskhSection({
     })
   }, [])
 
+  const removeCustomer = React.useCallback((id: string) => {
+    setReport(
+      (prev) =>
+        prev && {
+          ...prev,
+          customers: prev.customers.filter((c) => c.id !== id),
+        }
+    )
+  }, [])
+
+  const addViewExtra = React.useCallback((extra: CskhViewExtra) => {
+    setReport(
+      (prev) => prev && { ...prev, viewExtras: [...prev.viewExtras, extra] }
+    )
+  }, [])
+
+  const removeViewExtra = React.useCallback((id: string) => {
+    setReport(
+      (prev) =>
+        prev && {
+          ...prev,
+          viewExtras: prev.viewExtras.filter((e) => e.id !== id),
+        }
+    )
+  }, [])
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -149,6 +176,9 @@ export function CskhSection({
           <CskhDetailTable
             report={report}
             onCustomerChange={upsertCustomer}
+            onCustomerRemoved={removeCustomer}
+            onViewExtraAdded={addViewExtra}
+            onViewExtraRemoved={removeViewExtra}
           />
           <p className="text-xs text-muted-foreground">
             Khách xem = số lần gắn tag tên nhân viên trong ngày (giống Pancake,
@@ -165,11 +195,15 @@ export function CskhSection({
             sale&quot;. Giá bản luận tính theo ngày chốt, Đã trả
             theo ngày khách trả. AOV = giá bản luận / khách chốt · Tỉ lệ chốt =
             khách chốt / khách xem. Bấm ô Khách chốt / Giá bản luận / Đã trả
-            của một người để nhập giá và tiền trả của khách người đó.
+            của một người để nhập giá và tiền trả của khách người đó. Dấu + ở
+            cột từng người: Khách xem để cộng thêm khách xem ở web khác, Khách
+            chốt để nhập khách chốt ngoài Pancake hoặc khách trả nợ; số nhập
+            tay cộng thêm vào số của Pancake, kể cả ở cột Tổng.
           </p>
           <CskhCustomerList
             customers={report.customers}
             onChange={upsertCustomer}
+            onRemoved={removeCustomer}
           />
         </>
       ) : null}

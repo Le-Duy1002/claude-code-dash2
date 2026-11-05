@@ -110,13 +110,22 @@ function HitRow({
  * "Tìm khách": type a name or paste a Pancake conversation link, pick the
  * right person from the list (names repeat), and land straight on "Thêm lần
  * nhận tiền" for them. A customer not in the app yet (closed before tracking)
- * gets the old-customer debt form instead.
+ * gets the old-customer debt form instead. `inline` keeps all of it in place,
+ * for use inside a dialog.
  */
 export function CskhCustomerSearch({
   onChange,
+  inline = false,
+  defaultStaffKey = null,
+  defaultDate,
 }: {
   /** a record was saved or created */
   onChange: (next: CskhCustomer) => void
+  inline?: boolean
+  /** staff of a new old-customer record whose conversation has no name tag */
+  defaultStaffKey?: string | null
+  /** the day "Ngày nhận" starts on, today if unset */
+  defaultDate?: string
 }) {
   const inputRef = React.useRef<HTMLInputElement>(null)
   const [query, setQuery] = React.useState("")
@@ -154,7 +163,11 @@ export function CskhCustomerSearch({
   }, [text, searchable])
 
   function pick(next: Picked) {
-    setPicked(next)
+    setPicked(
+      next.kind === "new"
+        ? { ...next, staffKey: next.staffKey ?? defaultStaffKey }
+        : next
+    )
     setListOpen(false)
   }
 
@@ -183,30 +196,83 @@ export function CskhCustomerSearch({
         ? `Khách cũ trả nợ${picked.customerName ? ` · ${picked.customerName}` : ""}`
         : ""
 
-  return (
-    <div className="relative w-full sm:w-96">
-      <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-      <Input
-        ref={inputRef}
-        value={query}
-        onChange={(e) => {
-          setQuery(e.target.value)
-          setListOpen(true)
-        }}
-        onFocus={() => setListOpen(true)}
-        onBlur={() => setListOpen(false)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") setListOpen(false)
-        }}
-        placeholder="Tìm tên khách hoặc dán link hội thoại Pancake…"
-        className="pl-8"
+  const pickedForm =
+    picked?.kind === "record" ? (
+      <PaymentsPanel
+        key={picked.customer.id}
+        customer={picked.customer}
+        showTitle={false}
+        defaultDate={defaultDate}
+        onSave={(patch) => saveRecord(picked.customer, patch)}
       />
-      {loading ? (
-        <Loader2Icon className="absolute top-1/2 right-2.5 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
-      ) : null}
+    ) : picked ? (
+      <NewDebtForm
+        key={picked.conversationId ?? picked.customerName}
+        customerName={picked.customerName}
+        conversationId={picked.conversationId}
+        staffKey={picked.staffKey}
+        defaultDate={defaultDate}
+        onCreated={(customer) => {
+          setPicked({ kind: "record", customer })
+          onChange(customer)
+        }}
+      />
+    ) : null
+  const backButton = (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="self-start"
+      onClick={backToSearch}
+    >
+      <ArrowLeftIcon data-icon="inline-start" />
+      Tìm khách khác
+    </Button>
+  )
 
-      {listOpen && searchable ? (
-        <div className="absolute top-full right-0 z-50 mt-1 max-h-96 w-full overflow-y-auto rounded-lg border bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 sm:w-[28rem]">
+  if (inline && picked) {
+    return (
+      <div className="flex flex-col gap-3">
+        <p className="text-sm font-medium">{title}</p>
+        {pickedForm}
+        {backButton}
+      </div>
+    )
+  }
+
+  return (
+    <div className={cn("relative w-full", !inline && "sm:w-96")}>
+      <div className="relative">
+        <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          ref={inputRef}
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setListOpen(true)
+          }}
+          onFocus={() => setListOpen(true)}
+          onBlur={() => setListOpen(false)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setListOpen(false)
+          }}
+          placeholder="Tìm tên khách hoặc dán link hội thoại Pancake…"
+          className="pl-8"
+        />
+        {loading ? (
+          <Loader2Icon className="absolute top-1/2 right-2.5 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+        ) : null}
+      </div>
+
+      {(inline || listOpen) && searchable ? (
+        <div
+          className={cn(
+            "overflow-y-auto rounded-lg border p-1",
+            inline
+              ? "mt-2 max-h-72"
+              : "absolute top-full right-0 z-50 mt-1 max-h-96 w-full bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 sm:w-[28rem]"
+          )}
+        >
           {hits == null ? (
             <p className="px-2 py-3 text-sm text-muted-foreground">Đang tìm…</p>
           ) : hits.length === 0 ? (
@@ -253,36 +319,20 @@ export function CskhCustomerSearch({
         </div>
       ) : null}
 
-      <Dialog open={picked != null} onOpenChange={(open) => !open && setPicked(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className={cn("pr-6")}>{title}</DialogTitle>
-          </DialogHeader>
-          {picked?.kind === "record" ? (
-            <PaymentsPanel
-              key={picked.customer.id}
-              customer={picked.customer}
-              showTitle={false}
-              onSave={(patch) => saveRecord(picked.customer, patch)}
-            />
-          ) : picked ? (
-            <NewDebtForm
-              key={picked.conversationId ?? picked.customerName}
-              customerName={picked.customerName}
-              conversationId={picked.conversationId}
-              staffKey={picked.staffKey}
-              onCreated={(customer) => {
-                setPicked({ kind: "record", customer })
-                onChange(customer)
-              }}
-            />
-          ) : null}
-          <Button variant="ghost" size="sm" className="self-start" onClick={backToSearch}>
-            <ArrowLeftIcon data-icon="inline-start" />
-            Tìm khách khác
-          </Button>
-        </DialogContent>
-      </Dialog>
+      {inline ? null : (
+        <Dialog
+          open={picked != null}
+          onOpenChange={(open) => !open && setPicked(null)}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className={cn("pr-6")}>{title}</DialogTitle>
+            </DialogHeader>
+            {pickedForm}
+            {backButton}
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }
