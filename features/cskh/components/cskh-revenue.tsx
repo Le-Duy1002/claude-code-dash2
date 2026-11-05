@@ -25,12 +25,18 @@ import {
   outstanding,
   receiptsIn,
   sumRevenue,
+  type CskhCustomer,
   type CskhPaymentKind,
   type CskhPeriod,
   type CskhReceipt,
   type CskhReport,
   type CskhRevenue,
 } from "../types"
+import {
+  ALL_STAFF,
+  StaffFilterButtons,
+  matchesStaffFilter,
+} from "./cskh-payments"
 import {
   PeriodExpandButtons,
   PeriodLabelCell,
@@ -164,15 +170,17 @@ function LagCell({
  * (or the customers still owing) behind it.
  */
 function DebtMonthTable({
-  report,
+  customers,
+  dates,
   receipts,
 }: {
-  report: CskhReport
+  customers: CskhCustomer[]
+  dates: string[]
   receipts: CskhReceipt[]
 }) {
   const { lags, rows } = React.useMemo(
-    () => debtMonthTable(report.customers, report.dates),
-    [report]
+    () => debtMonthTable(customers, dates),
+    [customers, dates]
   )
   if (rows.length === 0) {
     return (
@@ -193,7 +201,7 @@ function DebtMonthTable({
       )
     )
   const owingLines = (debtMonth: string | null | undefined): MoneyLine[] =>
-    report.customers
+    customers
       .filter(
         (c) =>
           (outstanding(c) ?? 0) > 0 &&
@@ -360,6 +368,53 @@ function DebtMonthTable({
   )
 }
 
+/** `DebtMonthTable` for everyone or for one staff's customers. */
+function DebtMonthCard({
+  report,
+  receipts,
+}: {
+  report: CskhReport
+  receipts: CskhReceipt[]
+}) {
+  const [staff, setStaff] = React.useState<string>(ALL_STAFF)
+  const customers = React.useMemo(
+    () => report.customers.filter((c) => matchesStaffFilter(c.staffKey, staff)),
+    [report.customers, staff]
+  )
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">
+          Nợ theo tháng — thu về sau mấy tháng, còn nợ bao nhiêu
+        </CardTitle>
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          <StaffFilterButtons value={staff} onChange={setStaff} />
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        <DebtMonthTable
+          customers={customers}
+          dates={report.dates}
+          receipts={receipts.filter((r) =>
+            matchesStaffFilter(r.staffKey, staff)
+          )}
+        />
+        <p className="text-xs text-muted-foreground">
+          Mỗi dòng là nợ của một tháng (tháng khách chốt, hoặc tháng nợ ghi khi
+          thêm khách trả nợ). &quot;Sau N tháng&quot; = tháng nhận tiền trừ
+          tháng nợ (nợ T9 trả vào T10 là sau 1 tháng), chữ nhỏ dưới số là tháng
+          nhận; dòng Tổng ghi tỉ lệ trên tổng đã thu. Chỉ tính các khoản trả nợ
+          nhận trong khoảng ngày đang chọn; khoản trả sau {DEBT_LAG_CAP} tháng
+          trở lên gộp chung một cột. Bình quân thu sau = số tháng trung bình,
+          tính theo số tiền. Còn nợ = giá bản luận − đã trả, tính đến hiện tại
+          và chỉ với khách đã nhập giá. Chọn nhân viên để xem riêng nợ của khách
+          người đó phụ trách. Bấm vào số để xem từng khách.
+        </p>
+      </CardContent>
+    </Card>
+  )
+}
+
 function RevenueCells({
   report,
   period,
@@ -476,27 +531,7 @@ export function CskhRevenueSheet({ report }: { report: CskhReport }) {
         </p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">
-            Nợ theo tháng — thu về sau mấy tháng, còn nợ bao nhiêu
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2">
-          <DebtMonthTable report={report} receipts={receipts} />
-          <p className="text-xs text-muted-foreground">
-            Mỗi dòng là nợ của một tháng (tháng khách chốt, hoặc tháng nợ ghi
-            khi thêm khách trả nợ). &quot;Sau N tháng&quot; = tháng nhận tiền
-            trừ tháng nợ (nợ T9 trả vào T10 là sau 1 tháng), chữ nhỏ dưới số
-            là tháng nhận; dòng Tổng ghi tỉ lệ trên tổng đã thu. Chỉ tính các
-            khoản trả nợ nhận trong khoảng ngày đang chọn; khoản trả sau{" "}
-            {DEBT_LAG_CAP} tháng trở lên gộp chung một cột. Bình quân thu sau
-            = số tháng trung bình, tính theo số tiền. Còn nợ = giá bản luận −
-            đã trả, tính đến hiện tại và chỉ với khách đã nhập giá. Bấm vào số
-            để xem từng khách.
-          </p>
-        </CardContent>
-      </Card>
+      <DebtMonthCard report={report} receipts={receipts} />
 
       <Card>
         <CardHeader>

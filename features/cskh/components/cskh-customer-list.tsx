@@ -36,10 +36,11 @@ import {
 } from "../types"
 import { CskhCustomerSearch } from "./cskh-customer-search"
 import {
-  NO_STAFF,
+  ALL_STAFF,
   PaymentsEditor,
-  STAFF_ITEMS,
+  StaffFilterButtons,
   StaffSelect,
+  matchesStaffFilter,
   parseMoney,
 } from "./cskh-payments"
 
@@ -300,15 +301,9 @@ export function CskhCustomerList({
   /** a close entered by hand was deleted */
   onRemoved: (id: string) => void
 }) {
-  const [staff, setStaff] = React.useState<string>("all")
+  const [staff, setStaff] = React.useState<string>(ALL_STAFF)
 
-  const visible = customers.filter((c) =>
-    staff === "all"
-      ? true
-      : staff === NO_STAFF
-        ? !c.staffKey
-        : c.staffKey === staff
-  )
+  const visible = customers.filter((c) => matchesStaffFilter(c.staffKey, staff))
   const missingPrice = customers.filter(
     (c) => c.price == null && !c.tagRemoved && !c.legacy
   ).length
@@ -343,16 +338,7 @@ export function CskhCustomerList({
           ) : null}
         </p>
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
-          {[{ value: "all", label: "Tất cả" }, ...STAFF_ITEMS].map((o) => (
-            <Button
-              key={o.value}
-              size="sm"
-              variant={staff === o.value ? "default" : "outline"}
-              onClick={() => setStaff(o.value)}
-            >
-              {o.label}
-            </Button>
-          ))}
+          <StaffFilterButtons value={staff} onChange={setStaff} />
           <span className="ml-auto text-xs text-muted-foreground">
             {visible.length} khách
           </span>

@@ -49,6 +49,41 @@ export const STAFF_ITEMS = [
   { value: NO_STAFF, label: "Chưa gán" },
 ]
 
+/** The `StaffFilterButtons` value that shows everyone. */
+export const ALL_STAFF = "all"
+
+export function matchesStaffFilter(
+  staffKey: string | null,
+  filter: string
+): boolean {
+  if (filter === ALL_STAFF) return true
+  return filter === NO_STAFF ? !staffKey : staffKey === filter
+}
+
+/** Tất cả, each staff, Chưa gán. */
+export function StaffFilterButtons({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (next: string) => void
+}) {
+  return (
+    <>
+      {[{ value: ALL_STAFF, label: "Tất cả" }, ...STAFF_ITEMS].map((o) => (
+        <Button
+          key={o.value}
+          size="sm"
+          variant={value === o.value ? "default" : "outline"}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </Button>
+      ))}
+    </>
+  )
+}
+
 /** "1.250.000" / "1250000" / "1 250 000" → 1250000; empty → null. */
 export function parseMoney(text: string): number | null {
   const digits = text.replace(/\D/g, "")
