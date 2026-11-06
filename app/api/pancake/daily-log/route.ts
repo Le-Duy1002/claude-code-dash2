@@ -2,6 +2,11 @@ import { NextResponse } from "next/server"
 
 import { adminAuth, adminDb } from "@/lib/firebase-admin"
 import { pancakePages } from "@/lib/pancake"
+import {
+  shiftDemoTally,
+  storedDemoTally,
+  type DemoTally,
+} from "@/lib/pancake-demo-tally"
 import { STAFF } from "@/features/pancake/staff"
 import {
   SHIFT_BUCKET_KEYS,
@@ -94,9 +99,30 @@ export async function GET(request: Request) {
     if (snap.exists) byDate.set(snap.id, snap.data() as AgentDayDoc)
   }
 
+  let shiftDemo: Map<string, Record<string, DemoTally>> | null = null
+  if (shift !== "all" && dates.length > 0) {
+    try {
+      shiftDemo = await shiftDemoTally(
+        shift,
+        allPages
+          .map((p) => p.fbPageId)
+          .filter((id) => id && (!wantShops || wantShops.has(id))),
+        dates
+      )
+    } catch (error) {
+      return NextResponse.json(
+        { error: "pancake_failed", detail: (error as Error).message },
+        { status: 502 }
+      )
+    }
+  }
+
   const rows: DailyLogRow[] = dates.map((date) => {
     const doc = byDate.get(date)
     const partial = doc?.partial ?? false
+    const demo = shiftDemo
+      ? (shiftDemo.get(date)?.[member.key] ?? { viewed: 0, closed: 0 })
+      : storedDemoTally(doc, member.key, wantShops)
     // one accumulator per shift bucket, so we can read the worked shifts
     const perBucket = Object.fromEntries(
       SHIFT_BUCKET_KEYS.map((sb) => [sb, emptyBucket()])
@@ -156,8 +182,8 @@ export async function GET(request: Request) {
       missed: acc.missed,
       tagCorrect: acc.tagCorrect,
       tagWrong: acc.tagWrong,
-      demoCustomers: acc.demoConversations,
-      demoClosed: acc.demoClosed,
+      demoCustomers: demo.viewed,
+      demoClosed: demo.closed,
       ordersClosed: acc.ordersClosed,
       note: notes.join(" · "),
       synced: Boolean(doc),

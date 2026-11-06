@@ -2,6 +2,13 @@ import { NextResponse } from "next/server"
 
 import { adminAuth, adminDb } from "@/lib/firebase-admin"
 import { pancakePages } from "@/lib/pancake"
+import {
+  DEMO_TAGS_FROM,
+  demoTallyRate,
+  shiftDemoTally,
+  sumStoredDemoTally,
+  type DemoTally,
+} from "@/lib/pancake-demo-tally"
 import { STAFF } from "@/features/pancake/staff"
 import {
   evaluateCriterion,
@@ -172,16 +179,42 @@ export async function GET(request: Request) {
     }
   }
 
+  // ---- demo figures: each person's own Pancake tags. One shift has to be read
+  // live; if Pancake fails, only this criterion is left unscored.
+  let shiftDemo: Map<string, Record<string, DemoTally>> | null = null
+  let shiftDemoFailed = false
+  const demoDates = dates.filter((date) => date >= DEMO_TAGS_FROM)
+  if (shift !== "all" && demoDates.length > 0) {
+    try {
+      shiftDemo = await shiftDemoTally(
+        shift,
+        allPages
+          .map((p) => p.fbPageId)
+          .filter((id) => id && (!wantShops || wantShops.has(id))),
+        demoDates
+      )
+    } catch {
+      shiftDemoFailed = true
+    }
+  }
+  const demoTallyOf = (staffKey: string): DemoTally => {
+    if (!shiftDemo) return sumStoredDemoTally(docs, staffKey, wantShops)
+    const tally = { viewed: 0, closed: 0 }
+    for (const perStaff of shiftDemo.values()) {
+      tally.viewed += perStaff[staffKey]?.viewed ?? 0
+      tally.closed += perStaff[staffKey]?.closed ?? 0
+    }
+    return tally
+  }
+
   // ---- evaluate
   const staff: StaffEvaluation[] = STAFF.map((member) => {
     const b = totals.get(member.key)!
     const onTimeRate = b.replied > 0 ? (b.onTime / b.replied) * 100 : null
     const closeRate =
       b.convHandled > 0 ? (b.ordersClosed / b.convHandled) * 100 : null
-    const demoRate =
-      b.demoConversations > 0
-        ? (b.demoClosed / b.demoConversations) * 100
-        : null
+    const demo = demoTallyOf(member.key)
+    const demoRate = shiftDemoFailed ? null : demoTallyRate(demo)
 
     const byTime = (events: ScoreEvent[]) =>
       events.slice().sort((a, c) => a.atMs - c.atMs)
@@ -233,8 +266,8 @@ export async function GET(request: Request) {
         slow: b.slow,
         missed: b.missed,
         sampled: b.replied,
-        demoConversations: b.demoConversations,
-        demoClosed: b.demoClosed,
+        demoConversations: demo.viewed,
+        demoClosed: demo.closed,
         schedule: hasSchedule
           ? {
               registeredShifts: sched!.registeredShifts,
@@ -250,6 +283,16 @@ export async function GET(request: Request) {
   })
 
   const warnings: string[] = []
+  if (shiftDemoFailed) {
+    warnings.push(
+      "Không đọc được thẻ demo theo ca từ Pancake — tiêu chí Chốt demo tạm chưa chấm, thử tải lại."
+    )
+  }
+  if (dates.length > 0 && dates[0] < DEMO_TAGS_FROM) {
+    warnings.push(
+      "Chốt demo chỉ tính từ 01/10/2026 — trước đó nhân viên chưa dùng thẻ chốt trên Pancake đầy đủ."
+    )
+  }
   if (missingDays.length) {
     warnings.push(
       `Chưa đồng bộ ${missingDays.length} ngày: ${missingDays

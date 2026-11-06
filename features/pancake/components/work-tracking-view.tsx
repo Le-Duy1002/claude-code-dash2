@@ -224,6 +224,12 @@ function Scorecard({
           <strong>Bỏ sót</strong> = nhân viên đã vào hội thoại nhưng bỏ ngỏ tin
           cuối của khách quá 20 phút.
         </p>
+        <p className="text-xs text-muted-foreground">
+          <strong>Chốt demo</strong> = thẻ chốt ÷ thẻ demo của chính nhân viên
+          trên Pancake (vd. <em>Hà Chốt</em> ÷ <em>HDemo</em>), khớp tab Demo ở
+          Chỉ số. Không tính theo người đứng tên đơn hay người trả lời. Chỉ tính
+          từ 01/10/2026.
+        </p>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div className="overflow-x-auto">

@@ -587,6 +587,13 @@ export function DailyLogView() {
                 <em>Đã chốt</em> phải đi kèm <em>Tiềm năng</em> — trừ khi có{" "}
                 <em>Demo</em> bên cạnh thì không cần Tiềm năng.
               </p>
+              <p>
+                <strong>Khách xem demo / Chốt từ demo</strong> = thẻ của chính
+                nhân viên này trên Pancake (vd. <em>HDemo</em> /{" "}
+                <em>Hà Chốt</em>), lấy từ Thống kê thẻ hội thoại, khớp tab Demo
+                ở Chỉ số. Đây là số lần gắn thẻ trừ số lần gỡ thẻ trong ngày,
+                nên có ngày ra số âm.
+              </p>
             </div>
           </CardContent>
         </Card>

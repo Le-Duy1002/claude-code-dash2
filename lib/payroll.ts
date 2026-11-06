@@ -1,6 +1,11 @@
 import "server-only"
 
 import { adminDb } from "@/lib/firebase-admin"
+import {
+  DEMO_TAGS_FROM,
+  demoTallyRate,
+  sumStoredDemoTally,
+} from "@/lib/pancake-demo-tally"
 import { STAFF } from "@/features/pancake/staff"
 import {
   evaluateCriterion,
@@ -194,8 +199,13 @@ export async function buildPayrollPeriod(
     const b = totals.get(member.key)!
     const onTimeRate = b.replied > 0 ? (b.onTime / b.replied) * 100 : null
     const tagRate = b.tagChecked > 0 ? (b.tagCorrect / b.tagChecked) * 100 : null
+    // periods before the close tags were in use keep their order-based rate
     const demoRate =
-      b.demoConversations > 0 ? (b.demoClosed / b.demoConversations) * 100 : null
+      firstIso >= DEMO_TAGS_FROM
+        ? demoTallyRate(sumStoredDemoTally(docs, member.key, null))
+        : b.demoConversations > 0
+          ? (b.demoClosed / b.demoConversations) * 100
+          : null
     const closeRate =
       b.convHandled > 0 ? (b.ordersClosed / b.convHandled) * 100 : null
     const missedCount = b.replied > 0 ? b.missed : null
